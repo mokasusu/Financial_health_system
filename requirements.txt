@@ -32,8 +32,11 @@ python-dotenv>=1.0.0
 # 7. Kiểm thử tự động (Testing)
 pytest>=8.0.0
 
+# 8. Giao diện trực quan Dashboard (Sprint 6)
+streamlit>=1.35.0
+
 # ==============================================================================
 # GHI CHÚ QUAN TRỌNG:
 # Các thư viện nâng cao (Streamlit, Plotly, OpenAI/Qwen, Docling/PyTorch...)
-# sẽ được bổ sung ở các sprint tiếp theo khi xây dựng giao diện và AI analysis.
+# được bổ sung theo từng sprint tương ứng.
 # ==============================================================================

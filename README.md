@@ -70,23 +70,66 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Bước 3: Đăng ký Kernel vào Jupyter
+### Bước 3: Cấu hình biến môi trường
+Tạo file `.env` từ `.env.example` (file `.env` được loại trừ khỏi Git để bảo mật):
 ```powershell
-python -m ipykernel install --user --name financial_health_env --display-name "Python 3.13 (Financial Health)"
+Copy-Item .env.example .env
 ```
+Cấu hình các tham số cần thiết trong `.env`:
+- `OPENROUTER_API_KEY`: Khóa API OpenRouter (nếu chưa có, hệ thống tự động kích hoạt Deterministic Fallback)
+- `OPENROUTER_MODEL`: Mô hình AI mặc định (`google/gemma-4-31b-it:free`)
+- `TESSERACT_CMD`: Đường dẫn tesseract executable nếu cần OCR tài liệu quét (mặc định Windows: `C:\Program Files\Tesseract-OCR\tesseract.exe`)
 
-### Bước 4: Khởi chạy Jupyter Notebook
+---
+
+## 4. Khởi Chạy Dashboard Tương Tác (Sprint 6)
+
+Chạy ứng dụng Streamlit trực tiếp từ môi trường ảo:
 ```powershell
-jupyter notebook notebooks/01_data_exploration.ipynb
-# Hoặc mở trực tiếp file .ipynb trên VS Code và chọn kernel "Python 3.13 (Financial Health)"
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+Ứng dụng sẽ tự động mở trên trình duyệt tại địa chỉ mặc định: `http://localhost:8501`.
+
+### 4.1. Quy trình Phân tích (End-to-End Pipeline)
+1. **Tải dữ liệu lên hoặc chọn mẫu có sẵn**:
+   - Chọn mẫu BCTC kiểm toán sẵn có (CTCP 32 năm 2020 hoặc 2017) để kiểm thử nhanh mà không cần tải file.
+   - Hoặc tải tệp BCTC của doanh nghiệp (PDF, ảnh PNG/JPG/JPEG, hoặc file TXT chuẩn hóa).
+2. **Trích xuất thông tin (Extraction)**:
+   - Module `PDFExtractor` tự động phân loại trang PDF văn bản số (Native text) hoặc trang quét cần OCR Tesseract (tiếng Việt `vie+eng`).
+3. **Chuẩn hóa & Ánh xạ ngữ nghĩa (Parsing & Mapping)**:
+   - `FinancialStatementParser` nhận diện Bảng Cân đối kế toán (B01-DN) và Báo cáo Kết quả Kinh doanh (B02-DN), ánh xạ theo mã số và danh mục từ đồng nghĩa Thông tư 200/2014/TT-BTC.
+4. **Kiểm định tính cân đối kế toán (TT200 Validation)**:
+   - `FinancialValidator` kiểm tra đẳng thức tổng tài sản = tổng nguồn vốn, cân đối doanh thu, chi phí, lợi nhuận.
+5. **Tính toán 14 Chỉ số Tài chính (Ratio Engine)**:
+   - `FinancialRatioCalculator` sử dụng số học `Decimal` chính xác, xử lý an toàn mẫu số 0, vốn CSH âm và số dư bình quân.
+6. **Đánh giá Sức khỏe & Cảnh báo Rủi ro (Health Assessment)**:
+   - `FinancialHealthAssessor` phân loại trạng thái (`ADEQUATE`, `WATCH`, `ALERT`, `NO_BENCHMARK`, `UNDEFINED`) và phát cảnh báo rủi ro có bằng chứng số liệu.
+7. **Nhận định Chuyên sâu AI & Fallback**:
+   - `AIFinancialInterpreter` tạo báo cáo điều hành chuyên sâu qua mô hình Gemma 4 (OpenRouter). Nếu API không sẵn sàng hoặc thiếu key, hệ thống tự động chuyển sang cơ chế **Deterministic Fallback** bảo đảm dịch vụ hoạt động liên tục.
+8. **Xuất báo cáo (Export)**:
+   - Tải báo cáo phân tích toàn diện dạng **JSON** hoặc danh mục 14 tỷ số và cảnh báo dạng **CSV** (hỗ trợ tiếng Việt UTF-8 BOM).
+
+### 4.2. Cơ chế AI Interpretation và Deterministic Fallback
+- Khi có `OPENROUTER_API_KEY`: Mô hình LLM phân tích chuyên sâu dựa trên số liệu đã kiểm chứng bởi Python (Ground truth), ngăn chặn hiện tượng ảo giác (hallucination).
+- Khi **không có API key** hoặc kết nối API gián đoạn: Hệ thống tự động chuyển đổi trong 0 giây sang bộ nhận định xác định (Deterministic Rule Engine), tổng hợp điểm mạnh, rủi ro và khuyến nghị từ 14 tỷ số mà không làm dừng ứng dụng.
+
+---
+
+## 5. Chạy Kiểm Thử Tự Động (Test Suite)
+
+Chạy toàn bộ 124 kiểm thử tự động (Unit & Integration tests):
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v tests/
+```
+Chạy nhanh (quiet mode):
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 ---
 
-## 4. Định Hướng Phát Triển Tiếp Theo
+## 6. Giới Hạn Cần Lưu Ý (Known Limitations)
 
-1. **Giai đoạn 1 (Hiện tại)**: Khảo sát Metadata và mẫu nhỏ các bộ dữ liệu, xác định schema dữ liệu mục tiêu.
-2. **Giai đoạn 2**: Xây dựng Pipeline chuẩn hóa dữ liệu BCTC tiếng Việt (Bảng cân đối kế toán, Báo cáo kết quả kinh doanh, Báo cáo lưu chuyển tiền tệ).
-3. **Giai đoạn 3**: Phát triển module tính toán chỉ số tài chính & bộ đánh giá sức khỏe (Financial Health Scoring).
-4. **Giai đoạn 4**: Xây dựng bộ kiểm thử tự động (Unit & Integration Tests) đảm bảo tính toàn vẹn số học.
-5. **Giai đoạn 5**: Thiết kế giao diện Dashboard phân tích với Streamlit.
+1. **Ngưỡng sàng lọc minh họa**: Các ngưỡng phân loại rủi ro (thanh khoản, đòn bẩy) là ngưỡng sàng lọc quy tắc ban đầu, không đại diện cho chuẩn mực pháp lý hay chuẩn ngành cố định cho mọi lĩnh vực.
+2. **Dữ liệu đơn kỳ**: BCTC 1 năm đơn lẻ chưa phản ánh đầy đủ chu kỳ mùa vụ hoặc xu hướng trung dài hạn.
+3. **Mô hình AI miễn phí**: Mô hình `google/gemma-4-31b-it:free` trên OpenRouter có thể chịu giới hạn tốc độ (rate limit) trong giờ cao điểm. Trong trường hợp đó, hệ thống sẽ tự động kích hoạt Deterministic Fallback an toàn.
