@@ -1,0 +1,39 @@
+# ==============================================================================
+# HỆ THỐNG TRÍCH XUẤT BCTC & ĐÁNH GIÁ SỨC KHỎE DOANH NGHIỆP VIỆT NAM
+# Danh sách thư viện giai đoạn 1: Khảo sát dữ liệu & Xử lý Metadata
+# ==============================================================================
+
+# 1. Truy vấn & Khảo sát Hugging Face API (Nhẹ, không tải mô hình)
+requests>=2.31.0
+huggingface_hub>=0.23.0
+
+# 2. Xử lý & Phân tích dữ liệu cấu trúc / bảng biểu
+pandas>=2.2.0
+openpyxl>=3.1.2
+tabulate>=0.9.0
+
+# 3. Tiện ích & Thanh tiến trình
+tqdm>=4.66.0
+
+# 4. Môi trường tương tác Jupyter Notebook
+ipykernel>=6.29.0
+notebook>=7.1.0
+
+# 5. Xử lý PDF & OCR văn bản BCTC
+pymupdf>=1.24.0
+pdfplumber>=0.11.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# 6. Chuẩn hóa dữ liệu & Cấu hình môi trường
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+
+# 7. Kiểm thử tự động (Testing)
+pytest>=8.0.0
+
+# ==============================================================================
+# GHI CHÚ QUAN TRỌNG:
+# Các thư viện nâng cao (Streamlit, Plotly, OpenAI/Qwen, Docling/PyTorch...)
+# sẽ được bổ sung ở các sprint tiếp theo khi xây dựng giao diện và AI analysis.
+# ==============================================================================
