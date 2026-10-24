@@ -342,8 +342,11 @@ class TestFinancialHealthAssessor:
 
     # Scenario 16: Integration with Real Sample Data (conghuy_A32_2020_sample.txt)
     def test_integration_with_real_conghuy_sample(self):
-        with open("data/samples/conghuy_A32_2020_sample.txt", "r", encoding="utf-8") as f:
-            content = f.read()
+        from pathlib import Path
+        sample_path = Path("data/samples/conghuy_A32_2020_sample.txt")
+        if not sample_path.is_file():
+            pytest.skip("Sample file not present in data/samples")
+        content = sample_path.read_text(encoding="utf-8")
 
         parser = FinancialStatementParser()
         report = parser.parse(content, source_name="conghuy_A32_2020_sample.txt")

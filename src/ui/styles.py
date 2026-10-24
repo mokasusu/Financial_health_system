@@ -290,6 +290,56 @@ h1, h2, h3, h4 {
     margin-top: 1rem;
     font-style: italic;
 }
+
+/* Ratio Matrix Styling */
+.matrix-group-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #006c49;
+    padding: 0.5rem 0.75rem;
+    background: #e6f4ef;
+    border-left: 4px solid #006c49;
+    border-radius: 0 6px 6px 0;
+    margin: 1.25rem 0 0.5rem 0;
+}
+
+.matrix-row {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background-color 0.15s ease;
+}
+
+.matrix-row:hover {
+    background-color: #f8fafc;
+}
+
+/* Top Action Bar */
+.top-action-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* Needs Review Tag */
+.needs-review-tag {
+    background-color: #fef3c7;
+    color: #92400e;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid #fde68a;
+    display: inline-block;
+}
 </style>
 """
 

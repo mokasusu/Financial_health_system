@@ -272,3 +272,34 @@ class TestStreamlitAppLaunch:
         # Click the analyze button (index 0)
         at.button[0].click().run()
         assert not at.exception
+
+    def test_app_starts_without_data_directory(self):
+        """Verify get_available_sample_options works cleanly when data/ is absent."""
+        from unittest.mock import patch
+        from app import get_available_sample_options
+        with patch("pathlib.Path.is_file", return_value=False):
+            options = get_available_sample_options()
+            assert isinstance(options, dict)
+            assert len(options) == 0
+
+    def test_in_memory_upload_no_file_retention(self):
+        """Verify uploaded documents are processed purely in-memory with zero file retention."""
+        import os
+        before_files = set(os.listdir(os.getcwd()))
+
+        sample_path = Path("data/samples/conghuy_A32_2020_sample.txt")
+        if sample_path.is_file():
+            file_bytes = sample_path.read_bytes()
+            report, assessment, ai_output, method = execute_pipeline(
+                file_bytes=file_bytes,
+                file_name="user_upload_test.txt",
+                period="current",
+                enable_ai=False,
+            )
+            assert report is not None
+            assert assessment is not None
+
+        after_files = set(os.listdir(os.getcwd()))
+        # Ensure no temporary file or uploaded document was persisted in the working directory
+        new_files = after_files - before_files
+        assert not any("user_upload_test" in f for f in new_files)

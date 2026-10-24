@@ -193,15 +193,18 @@ class TestAIFinancialInterpreter:
         assert "BẢO TOÀN SỐ LIỆU" in system_prompt
         assert "ngưỡng sàng lọc minh họa" in system_prompt
 
-        # Check User Prompt context
+        # Check User Prompt context contains the 4 core KPIs and no rule engine canned text
         assert "CTCP DƯỢC PHẨM MẪU" in user_prompt
         assert "2023" in user_prompt
         assert "VND" in user_prompt
-        assert "mixed" in user_prompt
         assert "1.45 lần" in user_prompt
-        assert "50.40%" in user_prompt
-        assert "LIQUIDITY_CURRENT_RATIO_WATCH" in user_prompt
-        assert "LEVERAGE_DEBT_TO_ASSETS_WATCH" in user_prompt
+        assert "current_ratio" in user_prompt
+        assert "debt_to_equity" in user_prompt
+        assert "roa" in user_prompt
+        assert "roe" in user_prompt
+        # Pre-configured rule engine warnings are excluded
+        assert "LIQUIDITY_CURRENT_RATIO_WATCH" not in user_prompt
+        assert "LEVERAGE_DEBT_TO_ASSETS_WATCH" not in user_prompt
 
     def test_successful_interpretation_parsing(self, sample_assessment, valid_llm_json):
         mock_client = MagicMock()
@@ -395,8 +398,11 @@ class TestAIFinancialInterpreter:
     # Integration with Real CTCP 32 Sample Data (conghuy_A32_2020_sample.txt)
     # =========================================================================
     def test_integration_with_ctcp32_real_sample(self):
-        with open("data/samples/conghuy_A32_2020_sample.txt", "r", encoding="utf-8") as f:
-            content = f.read()
+        from pathlib import Path
+        sample_path = Path("data/samples/conghuy_A32_2020_sample.txt")
+        if not sample_path.is_file():
+            pytest.skip("Sample file not present in data/samples")
+        content = sample_path.read_text(encoding="utf-8")
 
         # Step 1: Parse
         parser = FinancialStatementParser()
@@ -419,21 +425,15 @@ class TestAIFinancialInterpreter:
         interpreter = AIFinancialInterpreter(client=MagicMock())
         sys_p, user_p = interpreter.build_prompts(assessment)
 
-        # Verify that all 6 watch ratios and warnings are present in user prompt
+        # Verify that 4 core ratios are present in user prompt without pre-configured commentary
         assert "CÔNG TY CỔ PHẦN 32" in user_p
         assert "2020" in user_p
         assert "current_ratio" in user_p
         assert "1.45 lần" in user_p
-        assert "quick_ratio" in user_p
-        assert "0.68 lần" in user_p
-        assert "cash_ratio" in user_p
-        assert "0.18 lần" in user_p
-        assert "debt_to_assets" in user_p
-        assert "50.40%" in user_p
         assert "debt_to_equity" in user_p
         assert "1.02 lần" in user_p
-        assert "equity_ratio" in user_p
-        assert "49.60%" in user_p
+        assert "roa" in user_p
+        assert "roe" in user_p
 
         # Step 5: Test deterministic fallback on the real sample
         fallback_output = interpreter.generate_deterministic_fallback(

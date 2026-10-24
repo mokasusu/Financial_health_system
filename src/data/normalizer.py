@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 import re
 from typing import List, Optional
+import unicodedata
 from pydantic import BaseModel, Field
 
 
@@ -118,6 +119,11 @@ class AccountingNumberNormalizer:
                 detected_unit = "EUR"
 
         text_to_parse = re.sub(curr_pattern, "", raw_text).strip()
+        text_to_parse = text_to_parse.strip(" |;:*#^")
+        text_to_parse = re.sub(r"[\*#\^]+$", "", text_to_parse).strip()
+        # Strip trailing isolated single letter footnote artifact if preceded by valid digits (e.g. '166S' -> '166')
+        if re.search(r"\d[a-zA-Z]$", text_to_parse) and not re.search(r"\d[a-zA-Z]{2,}$", text_to_parse):
+            text_to_parse = text_to_parse[:-1]
 
         # Check for ambiguous characters (e.g. OCR letter O, l, I inside numbers)
         # We do NOT replace them guessing; we report ambiguity for manual/audit review.
@@ -138,11 +144,20 @@ class AccountingNumberNormalizer:
         # Case 3: Parenthesized negative numbers: e.g. (12.345) or (12,345)
         is_negative = False
 
-        # Check for parentheses: (123.456)
-        paren_match = re.match(r"^\s*\(\s*(.*?)\s*\)\s*$", text_to_parse)
+        # Strip trailing asterisk note markers
+        text_to_parse = re.sub(r"[\*#\^]+$", "", text_to_parse).strip()
+
+        # Check for parentheses: (123.456) or cut-off OCR parenthesis e.g. (123.456 or 123.456)
+        paren_match = re.match(r"^\s*[\(\[]\s*(.*?)\s*[\)\]]\s*$", text_to_parse)
         if paren_match:
             is_negative = True
             text_to_parse = paren_match.group(1)
+        elif text_to_parse.startswith("(") or text_to_parse.startswith("["):
+            is_negative = True
+            text_to_parse = text_to_parse[1:]
+        elif text_to_parse.endswith(")") or text_to_parse.endswith("]"):
+            is_negative = True
+            text_to_parse = text_to_parse[:-1]
         elif text_to_parse.startswith("-") or text_to_parse.startswith("−"):
             is_negative = True
             text_to_parse = text_to_parse[1:]
@@ -152,7 +167,11 @@ class AccountingNumberNormalizer:
 
         # Strip remaining packaging symbols (brackets, asterisk note markers like (*))
         text_to_parse = re.sub(r"\[.*?\]|\(.*?\)", "", text_to_parse)
-        text_to_parse = text_to_parse.replace("*", "").strip()
+        text_to_parse = re.sub(r"[\*#\^]+", "", text_to_parse).strip()
+
+        # Strip trailing isolated single letter footnote artifact if preceded by valid digits (e.g. '166S' -> '166')
+        if re.search(r"\d[a-zA-Z]$", text_to_parse) and not re.search(r"\d[a-zA-Z]{2,}$", text_to_parse):
+            text_to_parse = text_to_parse[:-1]
 
         # Remove inner whitespace e.g. "123 456 789"
         text_to_parse = re.sub(r"\s+", "", text_to_parse)
@@ -222,6 +241,15 @@ class AccountingNumberNormalizer:
 
         # Format with both dot and comma
         if has_dot and has_comma:
+            # Check if one separator was misread by OCR in standard 3-digit thousand groups
+            # e.g. 1,865.098.650.340 or 34.483.015.286,107
+            dot_count = text.count(".")
+            comma_count = text.count(",")
+            if (dot_count >= 2 and comma_count == 1) or (comma_count >= 2 and dot_count == 1):
+                mixed_parts = re.split(r"[,.]", text)
+                if len(mixed_parts) >= 3 and all(len(p) == 3 for p in mixed_parts[1:]):
+                    return "".join(mixed_parts), warnings
+
             last_dot = text.rfind(".")
             last_comma = text.rfind(",")
 
@@ -331,3 +359,13 @@ class AccountingNumberNormalizer:
         text = re.sub(r"\s+", " ", text)
 
         return text.strip().lower()
+
+    @classmethod
+    def strip_accents(cls, text: str) -> str:
+        """Remove Vietnamese diacritics / accents for robust matching."""
+        if not text:
+            return ""
+        # Normalize đ/Đ first
+        t = text.replace("đ", "d").replace("Đ", "D")
+        nfkd = unicodedata.normalize("NFKD", t)
+        return "".join(c for c in nfkd if not unicodedata.combining(c)).strip().lower()

@@ -112,11 +112,9 @@ class OpenRouterConfig:
         Prioritizes OPENROUTER_* variables, falling back to legacy QWEN_* variables.
         Raises ConfigurationError if API key or model is missing or empty.
         """
-        # Load environment variables from .env file if available
+        # Load environment variables from .env file if explicitly specified
         if env_path:
             load_dotenv(dotenv_path=env_path)
-        else:
-            load_dotenv()
 
         # 1. API Key resolution
         api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("QWEN_API_KEY")

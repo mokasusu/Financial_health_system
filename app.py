@@ -10,9 +10,12 @@ Streamlit entry point integrating:
 """
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from dotenv import load_dotenv
+import logging
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 # Load environment configuration safely
 load_dotenv()
@@ -27,20 +30,22 @@ from src.financial.assessment_models import FinancialAssessment
 from src.financial.ratios import FinancialRatioCalculator, FinancialRatioReport
 from src.ocr.models import DocumentExtractionResult
 from src.ocr.pdf_extractor import PDFExtractor
+import importlib
+import src.ui.components
+importlib.reload(src.ui.components)
 from src.ui.components import (
+    apply_edits_to_report,
+    build_statement_dataframes,
+    get_statement_column_names,
     render_ai_interpretation,
-    render_export_section,
-    render_financial_statements,
+    render_core_4_kpi_cards,
     render_header,
-    render_health_assessment,
-    render_kpi_cards,
-    render_ratio_analysis,
+    render_top_action_bar,
 )
 from src.ui.styles import apply_custom_styles
 
 
 # Page Configuration
-st.set_page_state = getattr(st, "set_page_state", None)
 st.set_page_config(
     page_title="Financial Health System | Đánh giá Sức khỏe Tài chính",
     page_icon="📊",
@@ -51,19 +56,30 @@ st.set_page_config(
 # Apply emerald design system styles
 apply_custom_styles()
 
-# Built-in Sample Paths
-SAMPLES_DIR = Path("data/samples")
-SAMPLE_OPTIONS = {
-    "Không dùng mẫu (Tải file của bạn lên)": None,
-    "Mẫu 1: CTCP 32 (Năm 2020) - BCTC Kiểm toán TT200": SAMPLES_DIR / "conghuy_A32_2020_sample.txt",
-    "Mẫu 2: CTCP 32 (Năm 2017) - BCTC Đầy đủ": SAMPLES_DIR / "vduydong_A32_2017_sample.txt",
-}
+
+def get_available_sample_options() -> Dict[str, Path]:
+    """Helper for testing compatibility: returns available samples if file exists on disk."""
+    candidates = [
+        ("Mẫu 1", Path("data/samples/conghuy_A32_2020_sample.txt")),
+        ("Mẫu 2", Path("data/samples/vduydong_A32_2017_sample.txt")),
+    ]
+    available: Dict[str, Path] = {}
+    for label, path in candidates:
+        if path.is_file():
+            available[label] = path
+    return available
 
 
 def initialize_session_state() -> None:
     """Initialize session state variables to cache execution outputs across reruns."""
+    if "stage" not in st.session_state:
+        st.session_state.stage = "idle"  # 'idle' -> 'extracted' -> 'calculated'
     if "report" not in st.session_state:
         st.session_state.report = None
+    if "df_bs" not in st.session_state:
+        st.session_state.df_bs = None
+    if "df_is" not in st.session_state:
+        st.session_state.df_is = None
     if "ratio_report" not in st.session_state:
         st.session_state.ratio_report = None
     if "assessment" not in st.session_state:
@@ -76,17 +92,109 @@ def initialize_session_state() -> None:
         st.session_state.extraction_method = None
     if "is_analyzed" not in st.session_state:
         st.session_state.is_analyzed = False
+    if "ai_error" not in st.session_state:
+        st.session_state.ai_error = None
 
 
 def reset_analysis() -> None:
     """Clear cached pipeline results safely."""
+    st.session_state.stage = "idle"
     st.session_state.report = None
+    st.session_state.df_bs = None
+    st.session_state.df_is = None
     st.session_state.ratio_report = None
     st.session_state.assessment = None
     st.session_state.ai_output = None
     st.session_state.source_name = None
     st.session_state.extraction_method = None
     st.session_state.is_analyzed = False
+    st.session_state.ai_error = None
+
+
+@st.cache_resource
+def get_pdf_extractor() -> PDFExtractor:
+    """Cache PDFExtractor instance across Streamlit reruns to eliminate model reloading."""
+    return PDFExtractor(extract_tables=False)
+
+
+def extract_financial_report(
+    file_bytes: Optional[bytes],
+    file_name: str,
+    period: str = "current",
+) -> Tuple[Optional[FinancialReport], Optional[str]]:
+    """Step 1: Extract document text/OCR, parse statements, and run initial TT200 validation."""
+    extraction_method = "Trích xuất văn bản"
+    parser = FinancialStatementParser()
+
+    if file_name.lower().endswith(".txt"):
+        extraction_method = "Văn bản mẫu có cấu trúc"
+        text_content = file_bytes.decode("utf-8", errors="replace") if file_bytes else ""
+        if not text_content.strip():
+            return None, "Tệp văn bản tải lên rỗng."
+        report = parser.parse(text_content, source_name=file_name)
+    else:
+        extractor = get_pdf_extractor()
+        try:
+            extraction_result: DocumentExtractionResult = extractor.extract(
+                file_input=file_bytes or b"", source_name=file_name
+            )
+        except Exception as exc:
+            return None, f"Lỗi trong quá trình trích xuất tài liệu: {exc}"
+
+        if not extraction_result.success:
+            err_msg = " | ".join(extraction_result.errors) if extraction_result.errors else "Không trích xuất được nội dung"
+            return None, f"Trích xuất thất bại: {err_msg}"
+
+        if not extraction_result.full_text.strip():
+            return None, "Không tìm thấy nội dung văn bản trong tài liệu tải lên."
+
+        extraction_method = "PDF / OCR Hybrid"
+        report = parser.parse(extraction_result, source_name=file_name)
+
+    # Initial accounting equation check
+    validator = FinancialValidator()
+    validation_summary = validator.validate(report, period=period)
+    report.validation_results = validation_summary
+
+    has_bs_items = bool(report.balance_sheet and report.balance_sheet.items)
+    has_is_items = bool(report.income_statement and report.income_statement.items)
+    if not has_bs_items and not has_is_items:
+        return report, "Không nhận diện được các chỉ tiêu Bảng Cân đối kế toán hoặc Kết quả kinh doanh."
+
+    return report, extraction_method
+
+
+def calculate_assessment_and_ai(
+    report: FinancialReport,
+    period: str = "current",
+    enable_ai: bool = True,
+) -> Tuple[FinancialRatioReport, FinancialAssessment, Optional[AIInterpretationOutput]]:
+    """Step 2: Calculate financial ratios, assess health status, and generate AI interpretation."""
+    calculator = FinancialRatioCalculator()
+    ratio_report: FinancialRatioReport = calculator.calculate_all(report, period=period)
+
+    assessor = FinancialHealthAssessor()
+    assessment: FinancialAssessment = assessor.assess(ratio_report)
+
+    ai_output = None
+    st.session_state.ai_error = None
+
+    if enable_ai:
+        try:
+            load_dotenv(override=True)
+            interpreter = AIFinancialInterpreter()
+            ai_output = interpreter.interpret(
+                assessment=assessment,
+                ratio_report=ratio_report,
+                allow_fallback=True,
+            )
+        except Exception as exc:
+            err_msg = str(exc)
+            logger.warning("Lỗi nhận định AI qua OpenRouter: %s", err_msg)
+            st.session_state.ai_error = err_msg
+            ai_output = None
+
+    return ratio_report, assessment, ai_output
 
 
 def execute_pipeline(
@@ -95,75 +203,20 @@ def execute_pipeline(
     period: str = "current",
     enable_ai: bool = True,
 ) -> Tuple[Optional[FinancialReport], Optional[FinancialAssessment], Optional[AIInterpretationOutput], Optional[str]]:
-    """Execute end-to-end financial analysis pipeline through existing Python engines."""
-    # Step 1: Document Extraction
-    extraction_method = "Trích xuất văn bản"
-    parser = FinancialStatementParser()
+    """Execute end-to-end financial analysis pipeline (combines Step 1 and Step 2)."""
+    report, method_or_err = extract_financial_report(file_bytes, file_name, period=period)
+    if report is None:
+        return None, None, None, method_or_err
 
-    if file_name.lower().endswith(".txt"):
-        # Direct parsing for standard text samples
-        extraction_method = "Văn bản mẫu có cấu trúc"
-        text_content = file_bytes.decode("utf-8", errors="replace") if file_bytes else ""
-        if not text_content.strip():
-            return None, None, None, "Tệp văn bản tải lên rỗng."
-        report = parser.parse(text_content, source_name=file_name)
-    else:
-        # PDF or standalone image via OCR/PDF extraction
-        extractor = PDFExtractor(extract_tables=False)
-        try:
-            extraction_result: DocumentExtractionResult = extractor.extract(
-                file_input=file_bytes or b"", source_name=file_name
-            )
-        except Exception as exc:
-            return None, None, None, f"Lỗi trong quá trình trích xuất tài liệu: {exc}"
-
-        if not extraction_result.success:
-            err_msg = " | ".join(extraction_result.errors) if extraction_result.errors else "Không trích xuất được nội dung"
-            return None, None, None, f"Trích xuất thất bại: {err_msg}"
-
-        if not extraction_result.full_text.strip():
-            return None, None, None, "Không tìm thấy nội dung văn bản trong tài liệu tải lên."
-
-        extraction_method = "PDF / OCR Hybrid"
-        report = parser.parse(extraction_result, source_name=file_name)
-
-    # Step 2: Validate Accounting Equations (TT200)
-    validator = FinancialValidator()
-    validation_summary = validator.validate(report, period=period)
-    report.validation_results = validation_summary
-
-    # Check if any financial line items exist
     has_bs_items = bool(report.balance_sheet and report.balance_sheet.items)
     has_is_items = bool(report.income_statement and report.income_statement.items)
     if not has_bs_items and not has_is_items:
-        return report, None, None, "Không nhận diện được các chỉ tiêu Bảng Cân đối kế toán hoặc Kết quả kinh doanh."
+        return report, None, None, method_or_err
 
-    # Step 3: Calculate 14 Financial Ratios
-    calculator = FinancialRatioCalculator()
-    ratio_report: FinancialRatioReport = calculator.calculate_all(report, period=period)
-
-    # Step 4: Health Assessment & Prioritized Risk Warnings
-    assessor = FinancialHealthAssessor()
-    assessment: FinancialAssessment = assessor.assess(ratio_report)
-
-    # Step 5: AI Interpretation (or Deterministic Fallback)
-    ai_output = None
-    if enable_ai:
-        try:
-            interpreter = AIFinancialInterpreter()
-            ai_output = interpreter.interpret(assessment, allow_fallback=True)
-        except Exception as exc:
-            # Fallback to local rule engine if API key is missing or OpenRouter fails
-            from src.financial.openrouter_client import OpenRouterClient, OpenRouterConfig
-            dummy_config = OpenRouterConfig(api_key="fallback-placeholder", model="google/gemma-4-31b-it:free")
-            dummy_client = OpenRouterClient(config=dummy_config)
-            fallback_interpreter = AIFinancialInterpreter(client=dummy_client)
-            ai_output = fallback_interpreter.generate_deterministic_fallback(
-                assessment=assessment,
-                error_reason=f"OpenRouter API chưa sẵn sàng hoặc chưa cấu hình: {exc}",
-            )
-
-    return report, assessment, ai_output, extraction_method
+    ratio_report, assessment, ai_output = calculate_assessment_and_ai(
+        report, period=period, enable_ai=enable_ai
+    )
+    return report, assessment, ai_output, method_or_err
 
 
 # Initialize state
@@ -175,60 +228,35 @@ initialize_session_state()
 with st.sidebar:
     st.markdown(
         """
-        <div style="text-align: center; padding: 0.5rem 0 1rem 0;">
-            <div style="font-size: 2rem;">🏛️</div>
-            <h2 style="color: #006c49; margin: 0; font-size: 1.35rem;">Financial Health System</h2>
-            <p style="color: #64748b; font-size: 0.8rem; margin: 0;">Đánh giá sức khỏe tài chính DN Việt Nam</p>
+        <div style="text-align: center; padding: 0.5rem 0 1.25rem 0;">
+            <div style="font-size: 2.2rem; margin-bottom: 0.25rem;">🏛️</div>
+            <h2 style="color: #006c49; margin: 0; font-size: 1.3rem; font-weight: 700;">Financial Health System</h2>
+            <p style="color: #64748b; font-size: 0.8rem; margin: 0.25rem 0 0 0;">Chuẩn Thông tư 200/2014/TT-BTC</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("---")
-    st.subheader("1. Nguồn Dữ Liệu")
-
-    # Sample selector
-    selected_sample_label = st.selectbox(
-        "Dùng mẫu BCTC có sẵn:",
-        options=list(SAMPLE_OPTIONS.keys()),
-        index=1,  # Default to Sample 1 (CTCP 32 năm 2020) for instant out-of-the-box readiness!
-    )
-    selected_sample_path = SAMPLE_OPTIONS[selected_sample_label]
-
-    # File uploader
+    # Primary file uploader
     uploaded_file = st.file_uploader(
-        "Hoặc tải lên BCTC (PDF, Ảnh hoặc TXT):",
+        "Tải lên Báo cáo tài chính:",
         type=["pdf", "png", "jpg", "jpeg", "txt"],
-        help="Hỗ trợ báo cáo tài chính định dạng PDF, ảnh chụp rõ nét hoặc file text chuẩn hóa.",
-    )
-
-    st.markdown("---")
-    st.subheader("2. Cấu Hình Phân Tích")
-
-    # Reporting period selection
-    period_option = st.selectbox(
-        "Kỳ báo cáo:",
-        options=["current", "previous"],
-        format_func=lambda x: "Kỳ hiện hành (Current Period)" if x == "current" else "Kỳ trước (Previous Period)",
+        help="Hỗ trợ BCTC Hợp nhất hoặc BCTC Riêng theo Thông tư 200/VAS dạng PDF (vector/quét), ảnh chụp rõ nét hoặc text chuẩn hóa.",
     )
 
     # AI interpretation control
-    enable_ai = st.toggle("Bật nhận định AI (OpenRouter)", value=True)
+    enable_ai = st.toggle(
+        "Nhận định chuyên sâu AI",
+        value=True,
+        help="Tự động phân tích điểm mạnh, rủi ro và khuyến nghị tài chính qua AI Gateway (Gemma / OpenRouter) hoặc Fallback xác định.",
+    )
 
-    # OpenRouter status indicator
-    has_api_key = bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
-    if has_api_key:
-        model_name = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
-        st.caption(f"🟢 OpenRouter API đã sẵn sàng (`{model_name}`).")
-    else:
-        st.caption("🟡 Chưa cấu hình `OPENROUTER_API_KEY`. Hệ thống sẽ tự động dùng Deterministic Fallback.")
-
-    st.markdown("---")
+    st.markdown("<div style='height: 0.75rem;'></div>", unsafe_allow_html=True)
 
     # Action buttons
     col_btn1, col_btn2 = st.columns([2, 1])
     with col_btn1:
-        run_analysis = st.button("🚀 Phân Tích", type="primary", use_container_width=True)
+        run_extract = st.button("🚀 Bóc Tách BCTC", type="primary", use_container_width=True)
     with col_btn2:
         if st.button("🔄 Đặt lại", use_container_width=True):
             reset_analysis()
@@ -236,71 +264,146 @@ with st.sidebar:
 
 
 # =============================================================================
-# PIPELINE EXECUTION
+# PIPELINE STEP 1: EXTRACTION TRIGGER
 # =============================================================================
-if run_analysis:
-    file_bytes: Optional[bytes] = None
-    file_name: str = ""
-
+if run_extract:
     if uploaded_file is not None:
         file_bytes = uploaded_file.getvalue()
         file_name = uploaded_file.name
-    elif selected_sample_path is not None and selected_sample_path.is_file():
-        file_bytes = selected_sample_path.read_bytes()
-        file_name = selected_sample_path.name
-    else:
-        st.error("Vui lòng chọn một mẫu BCTC có sẵn hoặc tải tệp lên từ máy tính.")
 
-    if file_bytes:
-        with st.spinner("Đang xử lý trích xuất, kiểm định kế toán và đánh giá tài chính..."):
-            report, assessment, ai_output, method_or_err = execute_pipeline(
+        with st.spinner("Đang bóc tách OCR và nhận diện cấu trúc BCTC theo TT200..."):
+            report, method_or_err = extract_financial_report(
                 file_bytes=file_bytes,
                 file_name=file_name,
-                period=period_option,
-                enable_ai=enable_ai,
+                period="current",
             )
 
-            if assessment is None:
-                st.error(f"❌ Không thể hoàn tất phân tích: {method_or_err}")
+            if report is None:
+                st.error(f"❌ Không thể bóc tách tài liệu: {method_or_err}")
             else:
-                # Save to session state
+                df_bs, df_is = build_statement_dataframes(report)
                 st.session_state.report = report
-                st.session_state.assessment = assessment
-                st.session_state.ai_output = ai_output
+                st.session_state.df_bs = df_bs
+                st.session_state.df_is = df_is
                 st.session_state.source_name = file_name
                 st.session_state.extraction_method = method_or_err
-                st.session_state.is_analyzed = True
-                st.success("✅ Phân tích báo cáo tài chính thành công!")
+                st.session_state.stage = "extracted"
+                st.session_state.is_analyzed = False
+                st.success("✅ Bóc tách BCTC thành công! Vui lòng rà soát và chỉnh sửa số liệu trong bảng bên dưới.")
+    else:
+        st.warning("⚠️ Vui lòng tải lên tệp Báo cáo tài chính (PDF hoặc ảnh) ở thanh điều khiển bên trái để bắt đầu phân tích.")
 
 
 # =============================================================================
 # MAIN DASHBOARD PRESENTATION
 # =============================================================================
-if not st.session_state.is_analyzed or st.session_state.assessment is None:
-    # Empty welcome hero state
+if st.session_state.stage == "idle":
+    # 0. Hero Welcome View
     st.markdown(
         """
-        <div style="background-color: #ffffff; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 3rem 2rem; text-align: center; margin-top: 1rem;">
-            <div style="font-size: 3rem; margin-bottom: 0.5rem;">📈</div>
-            <h3 style="color: #006c49; margin-bottom: 0.5rem;">Sẵn sàng Phân tích Sức khỏe Tài chính Doanh nghiệp</h3>
-            <p style="color: #64748b; max-width: 650px; margin: 0 auto 1.5rem auto; font-size: 0.95rem; line-height: 1.6;">
-                Hệ thống tích hợp đường ống phân tích BCTC chuẩn mực TT200/2014/TT-BTC:
-                Trích xuất OCR &rarr; Chuẩn hóa &rarr; Kiểm tra cân đối kế toán &rarr;
-                Tính toán 14 tỷ số tài chính chính xác &rarr; Đánh giá cảnh báo rủi ro &rarr; Nhận định AI chuyên sâu.
+        <div style="background-color: #ffffff; border: 1.5px dashed #cbd5e1; border-radius: 14px; padding: 3.5rem 2rem; text-align: center; margin-top: 1rem; box-shadow: 0 1px 4px rgba(0,0,0,0.02);">
+            <div style="font-size: 3.2rem; margin-bottom: 0.75rem;">📊</div>
+            <h3 style="color: #006c49; margin-bottom: 0.5rem; font-size: 1.45rem; font-weight: 700;">Hệ Thống Đánh Giá Sức Khỏe Tài Chính Doanh Nghiệp</h3>
+            <p style="color: #64748b; max-width: 620px; margin: 0 auto 1.75rem auto; font-size: 0.95rem; line-height: 1.6;">
+                Tự động hóa bóc tách Báo cáo tài chính theo Thông tư 200/2014/TT-BTC, đối soát kiểm định cân đối kế toán và tính toán các chỉ số tài chính trọng yếu kèm nhận định AI.
             </p>
-            <div style="font-size: 0.875rem; color: #475569;">
-                👈 Chọn <strong>Mẫu BCTC có sẵn</strong> hoặc tải tệp BCTC của bạn lên tại thanh điều khiển bên trái, sau đó nhấn <strong>Phân Tích</strong>.
+            <div style="font-size: 0.9rem; color: #006c49; background: #e6f4ef; display: inline-block; padding: 0.6rem 1.4rem; border-radius: 9999px; font-weight: 600; border: 1px solid #a7f3d0;">
+                👈 Tải tệp BCTC (PDF hoặc ảnh) ở thanh bên trái và nhấn <strong>🚀 Bóc Tách BCTC</strong>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-else:
-    # 1. Header Banner
+
+elif st.session_state.stage == "extracted":
+    # 1. Step 1 View: Interactive Statement Data Editor
+    report: FinancialReport = st.session_state.report
+    company_name = report.company_name or "Doanh nghiệp"
+    fiscal_year = report.fiscal_year or "Chưa xác định"
+
+    st.markdown(
+        f"""
+        <div class="dashboard-header" style="padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;">
+            <h2 style="color: white; margin: 0 0 0.35rem 0; font-size: 1.4rem;">📝 RÀ SOÁT & HIỆU CHỈNH SỐ LIỆU BCTC ĐÃ NHẬN DIỆN</h2>
+            <div style="color: #e6f4ef; font-size: 0.9rem;">
+                🏢 <strong>{company_name}</strong> | 📅 Năm tài chính: <strong>{fiscal_year}</strong> | 📄 Nguồn: <strong>{st.session_state.source_name}</strong>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.info(
+        "💡 **Hướng dẫn:** Hệ thống đã tự động bóc tách các chỉ tiêu kế toán theo ngày tháng tương ứng. "
+        "Bạn có thể nhấn trực tiếp vào từng ô để chỉnh sửa số liệu nếu cần trước khi tính toán."
+    )
+
+    tab_bs, tab_is = st.tabs([
+        "📑 1. Bảng Cân đối Kế toán (B01-DN)",
+        "📊 2. Báo cáo Kết quả Kinh doanh (B02-DN)",
+    ])
+
+    (bs_cur_col, bs_prev_col), (is_cur_col, is_prev_col) = get_statement_column_names(report)
+
+    with tab_bs:
+        edited_df_bs = st.data_editor(
+            st.session_state.df_bs,
+            key="editor_bs",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "canonical_key": None,
+                "Mã số": st.column_config.TextColumn("Mã số TT200", width="small"),
+                "Chỉ tiêu BCTC": st.column_config.TextColumn("Chỉ tiêu kế toán", width="large", disabled=False),
+                bs_cur_col: st.column_config.TextColumn(bs_cur_col, width="medium"),
+                bs_prev_col: st.column_config.TextColumn(bs_prev_col, width="medium"),
+            },
+        )
+
+    with tab_is:
+        edited_df_is = st.data_editor(
+            st.session_state.df_is,
+            key="editor_is",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "canonical_key": None,
+                "Mã số": st.column_config.TextColumn("Mã số TT200", width="small"),
+                "Chỉ tiêu BCTC": st.column_config.TextColumn("Chỉ tiêu kế toán", width="large", disabled=False),
+                is_cur_col: st.column_config.TextColumn(is_cur_col, width="medium"),
+                is_prev_col: st.column_config.TextColumn(is_prev_col, width="medium"),
+            },
+        )
+
+    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+    c_btn_calc, _ = st.columns([2, 2])
+    with c_btn_calc:
+        if st.button("⚡ Tính Toán & Đánh Giá AI", type="primary", use_container_width=True):
+            with st.spinner("Đang cập nhật số liệu, tính toán 4 chỉ số tài chính và gọi AI nhận xét..."):
+                updated_report = apply_edits_to_report(report, edited_df_bs, edited_df_is)
+                ratio_report, assessment, ai_output = calculate_assessment_and_ai(
+                    updated_report,
+                    period="current",
+                    enable_ai=enable_ai,
+                )
+                st.session_state.report = updated_report
+                st.session_state.df_bs = edited_df_bs
+                st.session_state.df_is = edited_df_is
+                st.session_state.ratio_report = ratio_report
+                st.session_state.assessment = assessment
+                st.session_state.ai_output = ai_output
+                st.session_state.is_analyzed = True
+                st.session_state.stage = "calculated"
+                st.rerun()
+
+elif st.session_state.stage == "calculated":
+    # 2. Step 2 View: 4 Core KPI Cards + AI Commentary
     assessment: FinancialAssessment = st.session_state.assessment
-    report: Optional[FinancialReport] = st.session_state.report
+    ratio_report: FinancialRatioReport = st.session_state.ratio_report
+    report: FinancialReport = st.session_state.report
     ai_output: Optional[AIInterpretationOutput] = st.session_state.ai_output
 
+    # Top Header Banner
     render_header(
         company_name=assessment.company_name,
         fiscal_year=assessment.fiscal_year,
@@ -309,34 +412,89 @@ else:
         extraction_method=st.session_state.extraction_method,
     )
 
-    # 2. Executive KPI Cards
-    render_kpi_cards(assessment)
+    # Top Action Bar: Fast export buttons + company metadata
+    render_top_action_bar(assessment, ai_output, report)
 
-    st.markdown("<div style='height: 1.25rem;'></div>", unsafe_allow_html=True)
+    # Collapsible Expander to inspect & re-edit recognized financial statement numbers anytime
+    with st.expander("📝 Xem lại & Chỉnh sửa số liệu BCTC đã nhận diện (Nhấn để mở rộng)", expanded=False):
+        st.caption("Bạn có thể điều chỉnh lại bất kỳ số liệu nào bên dưới và nhấn nút 'Cập nhật số liệu & Tính lại'.")
+        tab_exp_bs, tab_exp_is = st.tabs([
+            "📑 Bảng Cân đối Kế toán (B01-DN)",
+            "📊 Báo cáo Kết quả Kinh doanh (B02-DN)",
+        ])
+        (bs_cur_col, bs_prev_col), (is_cur_col, is_prev_col) = get_statement_column_names(report)
+        with tab_exp_bs:
+            re_edited_df_bs = st.data_editor(
+                st.session_state.df_bs,
+                key="re_editor_bs",
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "canonical_key": None,
+                    "Mã số": st.column_config.TextColumn("Mã số TT200", width="small"),
+                    "Chỉ tiêu BCTC": st.column_config.TextColumn("Chỉ tiêu kế toán", width="large", disabled=False),
+                    bs_cur_col: st.column_config.TextColumn(bs_cur_col, width="medium"),
+                    bs_prev_col: st.column_config.TextColumn(bs_prev_col, width="medium"),
+                },
+            )
+        with tab_exp_is:
+            re_edited_df_is = st.data_editor(
+                st.session_state.df_is,
+                key="re_editor_is",
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "canonical_key": None,
+                    "Mã số": st.column_config.TextColumn("Mã số TT200", width="small"),
+                    "Chỉ tiêu BCTC": st.column_config.TextColumn("Chỉ tiêu kế toán", width="large", disabled=False),
+                    is_cur_col: st.column_config.TextColumn(is_cur_col, width="medium"),
+                    is_prev_col: st.column_config.TextColumn(is_prev_col, width="medium"),
+                },
+            )
+        if st.button("🔄 Cập nhật số liệu & Tính lại", use_container_width=True):
+            with st.spinner("Đang cập nhật số liệu và tính lại..."):
+                updated_report = apply_edits_to_report(report, re_edited_df_bs, re_edited_df_is)
+                ratio_report, assessment, ai_output = calculate_assessment_and_ai(
+                    updated_report,
+                    period="current",
+                    enable_ai=enable_ai,
+                )
+                st.session_state.report = updated_report
+                st.session_state.df_bs = re_edited_df_bs
+                st.session_state.df_is = re_edited_df_is
+                st.session_state.ratio_report = ratio_report
+                st.session_state.assessment = assessment
+                st.session_state.ai_output = ai_output
+                st.rerun()
 
-    # 3. Main Analytical Tabs
-    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5 = st.tabs([
-        "🏥 Sức khỏe & Cảnh báo",
-        "📊 14 Tỷ số Tài chính",
-        "🤖 Nhận định Chuyên sâu AI",
-        "📑 Số liệu BCTC & Kiểm định TT200",
-        "📥 Xuất Báo cáo",
-    ])
+    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
 
-    with main_tab1:
-        render_health_assessment(assessment)
+    # 4 Core KPI Cards (Clean white card container, numbers highlighted in Green/Yellow/Red)
+    render_core_4_kpi_cards(ratio_report, assessment)
 
-    with main_tab2:
-        render_ratio_analysis(assessment)
+    st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
 
-    with main_tab3:
+    # AI Commentary directly beneath the 4 KPI cards
+    if ai_output:
         render_ai_interpretation(ai_output)
+    elif st.session_state.get("ai_error"):
+        st.markdown(
+            f"""
+            <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 1.25rem 1.4rem; margin-top: 1rem;">
+                <div style="font-weight: 700; color: #991b1b; font-size: 1rem; margin-bottom: 0.35rem;">
+                    ⚠️ Không thể khởi tạo nhận định từ mô hình AI
+                </div>
+                <div style="color: #7f1d1d; font-size: 0.88rem; line-height: 1.5; margin-bottom: 0.4rem;">
+                    {st.session_state.ai_error}
+                </div>
+                <div style="color: #64748b; font-size: 0.8rem;">
+                    💡 Vui lòng kiểm tra lại <code>OPENROUTER_API_KEY</code>, <code>OPENROUTER_MODEL</code> và kết nối mạng trong file <code>.env</code>. Hệ thống không sử dụng các nhận xét cấu hình sẵn.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("Chưa có nhận định AI. Bạn có thể bật tùy chọn 'Nhận định chuyên sâu AI' ở thanh bên trái.")
 
-    with main_tab4:
-        if report:
-            render_financial_statements(report)
-        else:
-            st.info("Không có dữ liệu báo cáo tài chính gốc.")
 
-    with main_tab5:
-        render_export_section(assessment, ai_output, report)

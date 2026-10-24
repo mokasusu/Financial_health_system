@@ -57,15 +57,17 @@ htmlcov/
 .tox/
 .nox/
 
-# Data directories (chỉ giữ thư mục, không commit dữ liệu lớn)
+# Data directories (không commit dữ liệu thô, trung gian hoặc benchmark lớn)
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
 data/interim/*
 !data/interim/.gitkeep
-# Cho phép theo dõi các file mẫu kiểm thử nhỏ (<1MB) phục vụ kiểm thử và phát triển
-# data/raw, data/interim, data/processed tiếp tục được loại trừ hoàn toàn
+data/benchmark/
+data/temp/
+*.tmp
+*.temp
 
 # Windows specific
 Thumbs.db

@@ -50,6 +50,9 @@ class LineItem(BaseModel):
     mapping_method: MappingMethod = Field(default=MappingMethod.UNMAPPED)
     mapping_status: MappingStatus = Field(default=MappingStatus.UNMAPPED)
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    ocr_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="OCR text recognition confidence")
+    mapping_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Semantic mapping confidence")
+    row_consistency: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Consistency score between label, code, and values")
     warnings: List[str] = Field(default_factory=list, description="Warnings encountered during parsing/mapping")
 
 
@@ -86,6 +89,18 @@ class BalanceSheet(BaseModel):
     @property
     def short_term_investments(self) -> Optional[Decimal]:
         return self.get_value("short_term_investments")
+
+    @property
+    def trading_securities(self) -> Optional[Decimal]:
+        return self.get_value("trading_securities")
+
+    @property
+    def provision_trading_securities(self) -> Optional[Decimal]:
+        return self.get_value("provision_trading_securities")
+
+    @property
+    def held_to_maturity_investments(self) -> Optional[Decimal]:
+        return self.get_value("held_to_maturity_investments")
 
     @property
     def short_term_receivables(self) -> Optional[Decimal]:

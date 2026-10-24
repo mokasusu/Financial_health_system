@@ -1,4 +1,6 @@
 """Semantic parser and line item mapping for Vietnamese financial statements (Circular 200)."""
+from decimal import Decimal
+import difflib
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -26,7 +28,7 @@ BALANCE_SHEET_CANONICAL = {
     "current_assets": {
         "code": "100",
         "standard_label": "Tài sản ngắn hạn",
-        "synonyms": ["tai san ngan han", "tsnh", "tai san luu dong", "a tai san ngan han"],
+        "synonyms": ["tai san ngan han", "tsnh", "tai san luu dong", "a tai san ngan han", "tai sn ngn hn", "tai sn ngn han"],
         "disambiguation_antipatterns": ["dai han", "khac"],
     },
     "cash_and_equivalents": {
@@ -38,8 +40,40 @@ BALANCE_SHEET_CANONICAL = {
     "short_term_investments": {
         "code": "120",
         "standard_label": "Đầu tư tài chính ngắn hạn",
-        "synonyms": ["dau tu tai chinh ngan han", "dau tu ngan han", "chung khoan kinh doanh"],
-        "disambiguation_antipatterns": ["dai han"],
+        "synonyms": [
+            "dau tu tai chinh ngan han",
+            "dau tu ngan han",
+            "cac khoan dau tu tai chinh ngan han",
+        ],
+        "disambiguation_antipatterns": ["dai han", "chung khoan", "du phong", "dao han"],
+    },
+    "trading_securities": {
+        "code": "121",
+        "standard_label": "Chứng khoán kinh doanh",
+        "synonyms": [
+            "chung khoan kinh doanh",
+            "ckkd",
+        ],
+        "disambiguation_antipatterns": ["du phong", "dao han"],
+    },
+    "provision_trading_securities": {
+        "code": "122",
+        "standard_label": "Dự phòng giảm giá chứng khoán kinh doanh",
+        "synonyms": [
+            "du phong giam gia chung khoan kinh doanh",
+            "du phong giam gia chung khoan",
+            "du phong ckkd",
+        ],
+        "disambiguation_antipatterns": [],
+    },
+    "held_to_maturity_investments": {
+        "code": "123",
+        "standard_label": "Đầu tư nắm giữ đến ngày đáo hạn",
+        "synonyms": [
+            "dau tu nam giu den ngay dao han",
+            "nam giu den ngay dao han",
+        ],
+        "disambiguation_antipatterns": ["kinh doanh", "chung khoan"],
     },
     "short_term_receivables": {
         "code": "130",
@@ -62,7 +96,7 @@ BALANCE_SHEET_CANONICAL = {
     "non_current_assets": {
         "code": "200",
         "standard_label": "Tài sản dài hạn",
-        "synonyms": ["tai san dai han", "tsdh", "tai san co dinh va dau tu dai han", "b tai san dai han"],
+        "synonyms": ["tai san dai han", "tsdh", "tai san co dinh va dau tu dai han", "b tai san dai han", "tai sn dai hn"],
         "disambiguation_antipatterns": ["ngan han"],
     },
     "long_term_receivables": {
@@ -85,20 +119,27 @@ BALANCE_SHEET_CANONICAL = {
     },
     "total_assets": {
         "code": "270",
+        "alt_codes": ["280"],
         "standard_label": "Tổng cộng tài sản",
-        "synonyms": ["tong cong tai san", "tong tai san", "tong cong tai san 270"],
-        "disambiguation_antipatterns": ["nguon von", "ngan han", "dai han"],
+        "synonyms": [
+            "tong cong tai san",
+            "tong tai san",
+            "tong cong tai san 270",
+            "tong cong tai san 280",
+            "tong tai san 280",
+        ],
+        "disambiguation_antipatterns": ["nguon von", "ngan han", "dai han khac", "dai hn khac", "khac"],
     },
     "liabilities": {
         "code": "300",
         "standard_label": "Nợ phải trả",
-        "synonyms": ["no phai tra", "tong no phai tra", "c no phai tra"],
+        "synonyms": ["no phai tra", "tong no phai tra", "c no phai tra", "n phi tra", "n phai tra"],
         "disambiguation_antipatterns": ["von chu so huu", "ngan han", "dai han"],
     },
     "current_liabilities": {
         "code": "310",
         "standard_label": "Nợ ngắn hạn",
-        "synonyms": ["no ngan han"],
+        "synonyms": ["no ngan han", "n ngn hn", "n ngan han"],
         "disambiguation_antipatterns": ["dai han"],
     },
     "non_current_liabilities": {
@@ -110,7 +151,14 @@ BALANCE_SHEET_CANONICAL = {
     "equity": {
         "code": "400",
         "standard_label": "Vốn chủ sở hữu",
-        "synonyms": ["von chu so huu", "vcsh", "d von chu so huu"],
+        "synonyms": [
+            "von chu so huu",
+            "vcsh",
+            "d von chu so huu",
+            "von chu so hu",
+            "vn ch s hu",
+            "von chu",
+        ],
         "disambiguation_antipatterns": ["no phai tra", "nguon von"],
     },
     "total_equity_and_liabilities": {
@@ -145,13 +193,19 @@ INCOME_STATEMENT_CANONICAL = {
             "doanh thu thuan ve ban hang va cung cap dich vu",
             "doanh thu thuan",
             "doanh thu thuan ve ban hang",
+            "doanh thu thun v ban hang va cung cp dch v",
         ],
         "disambiguation_antipatterns": ["chua giam tru"],
     },
     "cost_of_goods_sold": {
         "code": "11",
         "standard_label": "Giá vốn hàng bán",
-        "synonyms": ["gia von hang ban", "gia von"],
+        "synonyms": [
+            "gia von hang ban",
+            "gia von",
+            "gia vn hang ban va dch v cung cp",
+            "gia von hang ban va dich vu cung cap",
+        ],
         "disambiguation_antipatterns": [],
     },
     "gross_profit": {
@@ -161,25 +215,39 @@ INCOME_STATEMENT_CANONICAL = {
             "loi nhuan gop ve ban hang va cung cap dich vu",
             "loi nhuan gop",
             "lai gop",
+            "li nhun gp v ban hang va cung cp dch v",
         ],
         "disambiguation_antipatterns": ["thuan", "truoc thue", "sau thue"],
     },
     "financial_income": {
         "code": "21",
+        "alt_codes": ["22"],
         "standard_label": "Doanh thu hoạt động tài chính",
-        "synonyms": ["doanh thu hoat dong tai chinh", "doanh thu tai chinh"],
+        "synonyms": [
+            "doanh thu hoat dong tai chinh",
+            "doanh thu tai chinh",
+            "doanh thu hot dng tai chinh",
+        ],
         "disambiguation_antipatterns": ["chi phi"],
     },
     "financial_expenses": {
         "code": "22",
+        "alt_codes": ["23"],
         "standard_label": "Chi phí tài chính",
         "synonyms": ["chi phi tai chinh"],
-        "disambiguation_antipatterns": ["lai vay", "doanh thu"],
+        "disambiguation_antipatterns": ["lai vay", "doanh thu", "di vay"],
     },
     "interest_expenses": {
         "code": "23",
+        "alt_codes": ["24"],
         "standard_label": "Chi phí lãi vay",
-        "synonyms": ["chi phi lai vay", "trong do chi phi lai vay", "lai vay"],
+        "synonyms": [
+            "chi phi lai vay",
+            "trong do chi phi lai vay",
+            "lai vay",
+            "trong do chi phi di vay",
+            "chi phi di vay",
+        ],
         "disambiguation_antipatterns": [],
     },
     "selling_expenses": {
@@ -201,6 +269,8 @@ INCOME_STATEMENT_CANONICAL = {
             "loi nhuan thuan tu hoat dong kinh doanh",
             "loi nhuan thuan hdkd",
             "loi nhuan tu hoat dong kinh doanh",
+            "li nhun thun t hot dng kinh doanh",
+            "li nhun thun tu hoat dong kinh doanh",
         ],
         "disambiguation_antipatterns": ["gop", "truoc thue", "sau thue"],
     },
@@ -229,6 +299,8 @@ INCOME_STATEMENT_CANONICAL = {
             "tong loi nhuan ke toan truoc thue",
             "loi nhuan truoc thue",
             "tong loi nhuan truoc thue",
+            "li nhun k toan trưc thu",
+            "li nhun ke toan truoc thue",
         ],
         "disambiguation_antipatterns": ["sau thue", "gop"],
     },
@@ -250,10 +322,254 @@ INCOME_STATEMENT_CANONICAL = {
             "loi nhuan sau thue",
             "lai sau thue",
             "loi nhuan thuan sau thue",
+            "li nhun sau thu tndn",
+            "li nhun sau thu",
         ],
         "disambiguation_antipatterns": ["truoc thue", "gop"],
     },
 }
+
+GENERIC_FINANCIAL_WORDS = {
+    "kinh doanh", "ngan han", "dai han", "khac", "chi phi",
+    "doanh thu", "thu nhap", "loi nhuan", "tai san", "nguon von",
+    "tien", "thue", "du phong", "dau tu", "phai thu", "phai tra"
+}
+
+
+class FinancialLexiconCorrector:
+    """Fuzzy lexicon corrector for Vietnamese financial statement line items.
+
+    Fixes dropped accents, OCR transcription errors, and missing tone marks
+    to map raw text to canonical Vietnamese financial statement names (Circular 200 / VAS).
+    """
+
+    CODE_THRESHOLD = 0.58
+    GLOBAL_THRESHOLD = 0.72
+
+    STANDARD_LEXICON: List[Dict[str, Any]] = [
+        # --- BẢNG CÂN ĐỐI KẾ TOÁN (B 01 - DN / B 01a - DN/HN) ---
+        # TÀI SẢN NGẮN HẠN
+        {"code": "100", "standard_label": "Tài sản ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han", "khac"]},
+        {"code": "110", "standard_label": "Tiền và các khoản tương đương tiền", "context": "balance_sheet", "antipatterns": ["dau tu", "phai thu"]},
+        {"code": "111", "standard_label": "Tiền", "context": "balance_sheet", "antipatterns": ["tuong duong", "dau tu"]},
+        {"code": "112", "standard_label": "Các khoản tương đương tiền", "context": "balance_sheet", "antipatterns": []},
+        {"code": "120", "standard_label": "Đầu tư tài chính ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han", "chung khoan", "du phong", "dao han"]},
+        {"code": "121", "standard_label": "Chứng khoán kinh doanh", "context": "balance_sheet", "antipatterns": ["du phong", "dao han"]},
+        {"code": "122", "standard_label": "Dự phòng giảm giá chứng khoán kinh doanh", "context": "balance_sheet", "antipatterns": []},
+        {"code": "123", "standard_label": "Đầu tư nắm giữ đến ngày đáo hạn", "context": "balance_sheet", "antipatterns": ["kinh doanh", "chung khoan"]},
+        {"code": "130", "standard_label": "Các khoản phải thu ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han", "khac", "noi bo"]},
+        {"code": "131", "standard_label": "Phải thu ngắn hạn của khách hàng", "context": "balance_sheet", "antipatterns": ["dai han", "tra truoc"]},
+        {"code": "132", "standard_label": "Trả trước cho người bán ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "135", "standard_label": "Phải thu về cho vay ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "136", "standard_label": "Phải thu ngắn hạn khác", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "137", "standard_label": "Dự phòng phải thu ngắn hạn khó đòi", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "139", "standard_label": "Tài sản thiếu chờ xử lý", "context": "balance_sheet", "antipatterns": []},
+        {"code": "140", "standard_label": "Hàng tồn kho", "context": "balance_sheet", "antipatterns": ["du phong"]},
+        {"code": "141", "standard_label": "Hàng tồn kho", "context": "balance_sheet", "antipatterns": ["du phong"]},
+        {"code": "149", "standard_label": "Dự phòng giảm giá hàng tồn kho", "context": "balance_sheet", "antipatterns": []},
+        {"code": "150", "standard_label": "Tài sản ngắn hạn khác", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "151", "standard_label": "Chi phí trả trước ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "152", "standard_label": "Thuế giá trị gia tăng được khấu trừ", "context": "balance_sheet", "antipatterns": []},
+        {"code": "153", "standard_label": "Thuế và các khoản khác phải thu Nhà nước", "context": "balance_sheet", "antipatterns": []},
+
+        # TÀI SẢN DÀI HẠN
+        {"code": "200", "standard_label": "Tài sản dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han", "khac"]},
+        {"code": "210", "standard_label": "Các khoản phải thu dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "211", "standard_label": "Phải thu dài hạn của khách hàng", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "212", "standard_label": "Trả trước cho người bán dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "215", "standard_label": "Phải thu về cho vay dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "216", "standard_label": "Phải thu dài hạn khác", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "219", "standard_label": "Dự phòng phải thu dài hạn khó đòi", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "220", "standard_label": "Tài sản cố định", "context": "balance_sheet", "antipatterns": ["vo hinh", "thue tai chinh", "nguyen gia", "hao mon"]},
+        {"code": "221", "standard_label": "Tài sản cố định hữu hình", "context": "balance_sheet", "antipatterns": ["vo hinh", "thue tai chinh"]},
+        {"code": "222", "standard_label": "Nguyên giá", "context": "balance_sheet", "antipatterns": ["hao mon"]},
+        {"code": "223", "standard_label": "Giá trị hao mòn lũy kế", "context": "balance_sheet", "antipatterns": ["nguyen gia"]},
+        {"code": "224", "standard_label": "Tài sản cố định thuê tài chính", "context": "balance_sheet", "antipatterns": []},
+        {"code": "227", "standard_label": "Tài sản cố định vô hình", "context": "balance_sheet", "antipatterns": ["huu hinh"]},
+        {"code": "228", "standard_label": "Nguyên giá", "context": "balance_sheet", "antipatterns": ["hao mon"]},
+        {"code": "229", "standard_label": "Giá trị hao mòn lũy kế", "context": "balance_sheet", "antipatterns": ["nguyen gia"]},
+        {"code": "230", "standard_label": "Bất động sản đầu tư", "context": "balance_sheet", "antipatterns": []},
+        {"code": "240", "standard_label": "Tài sản dở dang dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "242", "standard_label": "Chi phí xây dựng cơ bản dở dang", "context": "balance_sheet", "antipatterns": []},
+        {"code": "250", "standard_label": "Đầu tư tài chính dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "251", "standard_label": "Đầu tư vào công ty con", "context": "balance_sheet", "antipatterns": []},
+        {"code": "252", "standard_label": "Đầu tư vào công ty liên doanh, liên kết", "context": "balance_sheet", "antipatterns": []},
+        {"code": "253", "standard_label": "Đầu tư góp vốn vào đơn vị khác", "context": "balance_sheet", "antipatterns": []},
+        {"code": "254", "standard_label": "Dự phòng đầu tư tài chính dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "255", "standard_label": "Đầu tư nắm giữ đến ngày đáo hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "260", "standard_label": "Tài sản dài hạn khác", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "261", "standard_label": "Chi phí trả trước dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "262", "standard_label": "Tài sản thuế thu nhập hoãn lại", "context": "balance_sheet", "antipatterns": []},
+        {"code": "270", "alt_codes": ["280"], "standard_label": "Tổng cộng tài sản", "context": "balance_sheet", "antipatterns": ["nguon von", "ngan han", "dai han khac", "dai hn khac", "khac"]},
+
+        # NỢ PHẢI TRẢ
+        {"code": "300", "standard_label": "Nợ phải trả", "context": "balance_sheet", "antipatterns": ["von chu so huu", "ngan han", "dai han"]},
+        {"code": "310", "standard_label": "Nợ ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "311", "standard_label": "Phải trả người bán ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "312", "standard_label": "Người mua trả tiền trước ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "313", "standard_label": "Thuế và các khoản phải nộp Nhà nước", "context": "balance_sheet", "antipatterns": []},
+        {"code": "314", "standard_label": "Phải trả người lao động", "context": "balance_sheet", "antipatterns": []},
+        {"code": "315", "standard_label": "Chi phí phải trả ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "319", "standard_label": "Phải trả ngắn hạn khác", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "320", "standard_label": "Vay và nợ thuê tài chính ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "321", "standard_label": "Dự phòng phải trả ngắn hạn", "context": "balance_sheet", "antipatterns": ["dai han"]},
+        {"code": "322", "standard_label": "Quỹ khen thưởng, phúc lợi", "context": "balance_sheet", "antipatterns": []},
+        {"code": "330", "standard_label": "Nợ dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "331", "standard_label": "Phải trả người bán dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "332", "standard_label": "Người mua trả tiền trước dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "333", "standard_label": "Chi phí phải trả dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "337", "standard_label": "Phải trả dài hạn khác", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "338", "standard_label": "Vay và nợ thuê tài chính dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "341", "standard_label": "Dự phòng phải trả dài hạn", "context": "balance_sheet", "antipatterns": ["ngan han"]},
+        {"code": "342", "standard_label": "Thuế thu nhập hoãn lại phải trả", "context": "balance_sheet", "antipatterns": []},
+
+        # VỐN CHỦ SỞ HỮU
+        {"code": "400", "alt_codes": ["410"], "standard_label": "Vốn chủ sở hữu", "context": "balance_sheet", "antipatterns": ["no phai tra", "nguon von"]},
+        {"code": "411", "standard_label": "Vốn góp của chủ sở hữu", "context": "balance_sheet", "antipatterns": []},
+        {"code": "412", "standard_label": "Thặng dư vốn cổ phần", "context": "balance_sheet", "antipatterns": []},
+        {"code": "414", "standard_label": "Vốn khác của chủ sở hữu", "context": "balance_sheet", "antipatterns": []},
+        {"code": "415", "standard_label": "Cổ phiếu quỹ", "context": "balance_sheet", "antipatterns": []},
+        {"code": "418", "standard_label": "Quỹ đầu tư phát triển", "context": "balance_sheet", "antipatterns": []},
+        {"code": "420", "alt_codes": ["421"], "standard_label": "Lợi nhuận sau thuế chưa phân phối", "context": "balance_sheet", "antipatterns": []},
+        {"code": "421a", "standard_label": "LNST chưa phân phối lũy kế đến cuối kỳ trước", "context": "balance_sheet", "antipatterns": []},
+        {"code": "421b", "standard_label": "LNST chưa phân phối kỳ này", "context": "balance_sheet", "antipatterns": []},
+        {"code": "429", "standard_label": "Lợi ích cổ đông không kiểm soát", "context": "balance_sheet", "antipatterns": []},
+        {"code": "430", "standard_label": "Nguồn kinh phí và quỹ khác", "context": "balance_sheet", "antipatterns": []},
+        {"code": "440", "standard_label": "Tổng cộng nguồn vốn", "context": "balance_sheet", "antipatterns": ["tai san", "von chu so huu"]},
+
+        # --- BÁO CÁO KẾT QUẢ HOẠT ĐỘNG KINH DOANH (B 02 - DN / B 02a - DN/HN) ---
+        {"code": "01", "standard_label": "Doanh thu bán hàng và cung cấp dịch vụ", "context": "income_statement", "antipatterns": ["thuan", "tai chinh"]},
+        {"code": "02", "standard_label": "Các khoản giảm trừ doanh thu", "context": "income_statement", "antipatterns": []},
+        {"code": "10", "standard_label": "Doanh thu thuần về bán hàng và cung cấp dịch vụ", "context": "income_statement", "antipatterns": ["chua giam tru"]},
+        {"code": "11", "standard_label": "Giá vốn hàng bán", "context": "income_statement", "antipatterns": []},
+        {"code": "20", "standard_label": "Lợi nhuận gộp về bán hàng và cung cấp dịch vụ", "context": "income_statement", "antipatterns": ["thuan", "truoc thue", "sau thue"]},
+        {"code": "21", "alt_codes": ["22"], "standard_label": "Doanh thu hoạt động tài chính", "context": "income_statement", "antipatterns": ["chi phi"]},
+        {"code": "22", "alt_codes": ["23"], "standard_label": "Chi phí tài chính", "context": "income_statement", "antipatterns": ["lai vay", "doanh thu", "di vay"]},
+        {"code": "23", "alt_codes": ["24"], "standard_label": "Chi phí lãi vay", "context": "income_statement", "antipatterns": []},
+        {"code": "25", "standard_label": "Chi phí bán hàng", "context": "income_statement", "antipatterns": ["quan ly"]},
+        {"code": "26", "standard_label": "Chi phí quản lý doanh nghiệp", "context": "income_statement", "antipatterns": ["ban hang"]},
+        {"code": "30", "standard_label": "Lợi nhuận thuần từ hoạt động kinh doanh", "context": "income_statement", "antipatterns": ["gop", "truoc thue", "sau thue"]},
+        {"code": "31", "standard_label": "Thu nhập khác", "context": "income_statement", "antipatterns": ["chi phi", "loi nhuan"]},
+        {"code": "32", "standard_label": "Chi phí khác", "context": "income_statement", "antipatterns": ["thu nhap", "loi nhuan"]},
+        {"code": "40", "standard_label": "Lợi nhuận khác", "context": "income_statement", "antipatterns": []},
+        {"code": "50", "standard_label": "Tổng lợi nhuận kế toán trước thuế", "context": "income_statement", "antipatterns": ["sau thue", "gop"]},
+        {"code": "51", "standard_label": "Chi phí thuế thu nhập doanh nghiệp hiện hành", "context": "income_statement", "antipatterns": []},
+        {"code": "52", "standard_label": "Chi phí thuế thu nhập doanh nghiệp hoãn lại", "context": "income_statement", "antipatterns": []},
+        {"code": "60", "standard_label": "Lợi nhuận sau thuế thu nhập doanh nghiệp", "context": "income_statement", "antipatterns": ["truoc thue", "gop"]},
+        {"code": "61", "standard_label": "Lợi nhuận sau thuế của công ty mẹ", "context": "income_statement", "antipatterns": []},
+        {"code": "62", "standard_label": "Lợi nhuận sau thuế của cổ đông không kiểm soát", "context": "income_statement", "antipatterns": []},
+        {"code": "70", "standard_label": "Lãi cơ bản trên cổ phiếu", "context": "income_statement", "antipatterns": []},
+        {"code": "71", "standard_label": "Lãi suy giảm trên cổ phiếu", "context": "income_statement", "antipatterns": []},
+    ]
+
+    _CODE_MAP: Dict[str, List[Dict[str, Any]]] = {}
+    _INITIALIZED: bool = False
+
+    @classmethod
+    def _ensure_initialized(cls) -> None:
+        if cls._INITIALIZED:
+            return
+        cls._CODE_MAP = {}
+        for entry in cls.STANDARD_LEXICON:
+            clean_lbl = AccountingNumberNormalizer.clean_label(entry["standard_label"])
+            entry["_clean_label"] = clean_lbl
+            entry["_unaccented_label"] = AccountingNumberNormalizer.strip_accents(clean_lbl)
+
+            codes = [entry["code"]] + entry.get("alt_codes", [])
+            for c in codes:
+                c_norm = c.strip().lstrip("0") or "0"
+                cls._CODE_MAP.setdefault(c_norm, []).append(entry)
+                cls._CODE_MAP.setdefault(c.strip(), []).append(entry)
+        cls._INITIALIZED = True
+
+    @classmethod
+    def correct_label(
+        cls,
+        raw_label: str,
+        item_code: Optional[str] = None,
+        context: str = "unknown",
+    ) -> Tuple[str, bool]:
+        """Fuzzy-correct raw OCR line item label against standard Vietnamese accounting terminology.
+
+        Args:
+            raw_label: Raw string line label extracted by OCR.
+            item_code: Extracted line code (e.g. '100', '110', '01', '30') if detected.
+            context: Document context ('balance_sheet', 'income_statement', or 'unknown').
+
+        Returns:
+            Tuple of (corrected_label, is_corrected_bool).
+        """
+        cls._ensure_initialized()
+        cleaned_raw = AccountingNumberNormalizer.clean_label(raw_label)
+        unaccented_raw = AccountingNumberNormalizer.strip_accents(cleaned_raw)
+
+        if not unaccented_raw or len(unaccented_raw) < 3:
+            return raw_label, False
+
+        # Phase 1: Guided by item_code if present
+        if item_code:
+            code_key = str(item_code).strip()
+            code_norm = code_key.lstrip("0") or "0"
+            candidates = cls._CODE_MAP.get(code_norm, []) or cls._CODE_MAP.get(code_key, [])
+            for cand in candidates:
+                if context in ("balance_sheet", "income_statement") and cand["context"] != context:
+                    continue
+
+                has_anti = any(
+                    anti in unaccented_raw for anti in cand.get("antipatterns", [])
+                )
+                if has_anti:
+                    continue
+
+                cand_unaccented = cand["_unaccented_label"]
+                if (
+                    unaccented_raw == cand_unaccented
+                    or unaccented_raw in cand_unaccented
+                    or cand_unaccented in unaccented_raw
+                ):
+                    return cand["standard_label"], True
+
+                ratio = difflib.SequenceMatcher(None, unaccented_raw, cand_unaccented).ratio()
+                if ratio >= cls.CODE_THRESHOLD:
+                    return cand["standard_label"], True
+
+        # Phase 2: Global Fuzzy Match
+        best_cand: Optional[Dict[str, Any]] = None
+        best_ratio: float = 0.0
+
+        for cand in cls.STANDARD_LEXICON:
+            if context in ("balance_sheet", "income_statement") and cand["context"] != context:
+                continue
+
+            has_anti = any(
+                anti in unaccented_raw for anti in cand.get("antipatterns", [])
+            )
+            if has_anti:
+                continue
+
+            cand_unaccented = cand["_unaccented_label"]
+            if unaccented_raw == cand_unaccented:
+                return cand["standard_label"], True
+
+            ratio = difflib.SequenceMatcher(None, unaccented_raw, cand_unaccented).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_cand = cand
+
+        if best_cand is not None and best_ratio >= cls.GLOBAL_THRESHOLD:
+            return best_cand["standard_label"], True
+
+        return raw_label, False
+
+    @classmethod
+    def correct(
+        cls,
+        raw_label: str,
+        item_code: Optional[str] = None,
+        context: str = "unknown",
+    ) -> Tuple[str, bool]:
+        """Alias for correct_label."""
+        return cls.correct_label(raw_label, item_code, context)
 
 
 class FinancialStatementParser:
@@ -349,6 +665,43 @@ class FinancialStatementParser:
             income_statement=income_statement,
         )
 
+    @staticmethod
+    def _expand_cell_tokens(row_cells: List[str]) -> List[str]:
+        """Expand row tokens where multiple columns or numbers were combined into one string.
+
+        E.g.:
+          - '21.354.863.600.460 23.260.088.671.767' -> ['21.354.863.600.460', '23.260.088.671.767']
+          - '121 V.4(a)' -> ['121', 'V.4(a)']
+          - '(849.021.293) (920.681.738)' -> ['(849.021.293)', '(920.681.738)']
+        """
+        expanded: List[str] = []
+        for cell in row_cells:
+            cell_str = cell.strip()
+            if not cell_str:
+                continue
+
+            # Explanatory formula strings (e.g. '100 = 110 + 120 + ...') should not be broken up
+            if any(op in cell_str for op in ["=", "+"]):
+                expanded.append(cell_str)
+                continue
+
+            parts = [p.strip() for p in cell_str.split(" ") if p.strip()]
+            if len(parts) > 1:
+                is_num_or_code = [
+                    bool(
+                        re.fullmatch(r"\(?[\d.,]+[A-Za-z]?\)?", p)
+                        or re.fullmatch(r"[IVXLCDM]+\.\d+.*", p, re.I)
+                        or re.fullmatch(r"\d{2,3}", p)
+                    )
+                    for p in parts
+                ]
+                # Only split if all parts look like numbers/codes/notes or clean 2-element code+note/amount
+                if all(is_num_or_code) or (len(parts) <= 3 and is_num_or_code[0] and is_num_or_code[1]):
+                    expanded.extend(parts)
+                    continue
+            expanded.append(cell_str)
+        return expanded
+
     def _parse_text_lines_or_html(
         self,
         text: str,
@@ -366,21 +719,53 @@ class FinancialStatementParser:
                 tds = re.findall(r"<td[^>]*>(.*?)</td>", tr_content, flags=re.IGNORECASE | re.DOTALL)
                 clean_tds = [re.sub(r"<[^>]+>", "", td).strip() for td in tds]
                 if clean_tds:
-                    self._process_row_tokens(clean_tds, page_num, context, unit, bs, is_)
+                    expanded_tds = self._expand_cell_tokens(clean_tds)
+                    self._process_row_tokens(expanded_tds, page_num, context, unit, bs, is_)
             return
 
         # 2. Plain text line processing
         lines = text.splitlines()
+        pending_label = ""
         for line in lines:
             line = line.strip()
             if not line:
                 continue
 
-            # Look for lines with label and numbers
-            # Check if line matches: [Label] [Code optional] [Number 1] [Number 2 optional]
             tokens = [t.strip() for t in re.split(r"\t+|\s{2,}", line) if t.strip()]
-            if len(tokens) >= 2:
-                self._process_row_tokens(tokens, page_num, context, unit, bs, is_)
+            if not tokens:
+                continue
+
+            expanded_tokens = self._expand_cell_tokens(tokens)
+
+            # Check if this line contains any numeric values
+            has_numbers = False
+            for tok in expanded_tokens[1:]:
+                res = AccountingNumberNormalizer.parse(
+                    tok, decimal_convention=self.decimal_convention, unit=unit
+                )
+                if res.is_valid and res.value is not None:
+                    has_numbers = True
+                    break
+
+            if not has_numbers:
+                # Incomplete label line (e.g. "Dự phòng giảm giá chứng khoán")
+                if len(line) < 120 and not re.search(
+                    r"BÁO CÁO|BẢNG CÂN ĐỐI|MẪU SỐ|NGÀY \d|ĐƠN VỊ TÍNH|Trang \d", line, re.I
+                ):
+                    pending_label = line
+                else:
+                    pending_label = ""
+                continue
+
+            if pending_label:
+                l_idx = 0
+                if len(expanded_tokens[0]) <= 3 and len(expanded_tokens) > 1 and len(expanded_tokens[1]) > 3:
+                    l_idx = 1
+                expanded_tokens[l_idx] = f"{pending_label} {expanded_tokens[l_idx]}".strip()
+                pending_label = ""
+
+            if len(expanded_tokens) >= 2:
+                self._process_row_tokens(expanded_tokens, page_num, context, unit, bs, is_)
 
     def _parse_raw_table(
         self,
@@ -397,7 +782,8 @@ class FinancialStatementParser:
                 continue
             clean_row = [str(cell).strip() if cell is not None else "" for cell in row]
             if any(clean_row):
-                self._process_row_tokens(clean_row, page_num, context, unit, bs, is_)
+                expanded_row = self._expand_cell_tokens(clean_row)
+                self._process_row_tokens(expanded_row, page_num, context, unit, bs, is_)
 
     def _process_row_tokens(
         self,
@@ -409,6 +795,7 @@ class FinancialStatementParser:
         is_: IncomeStatement,
     ) -> None:
         """Analyze row tokens, identify label, item code, and numeric values."""
+        row_cells = self._expand_cell_tokens(row_cells)
         if not row_cells or len(row_cells) < 2:
             return
 
@@ -436,9 +823,15 @@ class FinancialStatementParser:
             if not cell_clean:
                 continue
 
-            # Check if cell is an item code e.g. "100", "110", "01"
-            if re.fullmatch(r"\d{2,3}", cell_clean) and item_code is None:
+            # Check if cell is an item code e.g. "100", "110", "01", "420a"
+            if re.fullmatch(r"\d{2,3}[a-z]?", cell_clean, re.I) and item_code is None:
                 item_code = cell_clean
+                continue
+
+            # Check if cell starts with item code followed by note ref e.g. "121 V.4(a)"
+            code_prefix_match = re.fullmatch(r"(\d{2,3}[a-z]?)\s+([A-Za-z0-9_(). -]+)", cell_clean, re.I)
+            if code_prefix_match and item_code is None:
+                item_code = code_prefix_match.group(1)
                 continue
 
             # Filter out non-numeric cells (e.g. note references like 'VI.1.', 'V.3.')
@@ -451,12 +844,32 @@ class FinancialStatementParser:
         if not number_values:
             return
 
+        # If item_code was not in a separate cell, look for trailing code in raw_label (e.g. attached to formula)
+        if item_code is None:
+            trailing_match = re.search(r"\b(\d{2,3}[a-z]?)\b\s*$", raw_label, re.I)
+            if trailing_match and ("=" in raw_label or any(op in raw_label for op in ["+", "-"])):
+                item_code = trailing_match.group(1).strip()
+                raw_label = raw_label[:trailing_match.start(1)].strip()
+
+        # Clean formula patterns e.g. (100 = 110 + 120...) or {30 = 20 + ...} from raw_label
+        while re.search(r"\{[^{}]*\}|\([^()]*\)", raw_label):
+            raw_label = re.sub(r"\{[^{}]*\}|\([^()]*\)", "", raw_label).strip()
+        raw_label = re.sub(r"\(mang sang trang sau\)|\(mang t trang trưc\)", "", raw_label, flags=re.I).strip()
+
+        # Spell correction and normalization using Vietnamese Accounting Lexicon
+        corrected_label, is_corrected = FinancialLexiconCorrector.correct_label(
+            raw_label=raw_label,
+            item_code=item_code,
+            context=context,
+        )
+        display_label = corrected_label if is_corrected else raw_label
+
         cur_val = number_values[0] if len(number_values) > 0 else None
         prev_val = number_values[1] if len(number_values) > 1 else None
 
         # Perform Semantic Mapping
         line_item = self.map_line_item(
-            raw_label=raw_label,
+            raw_label=display_label,
             item_code=item_code,
             cur_val=cur_val,
             prev_val=prev_val,
@@ -501,9 +914,18 @@ class FinancialStatementParser:
         unit: str,
         source_page: int,
         context: str = "unknown",
+        ocr_confidence: Optional[float] = None,
     ) -> LineItem:
-        """Map a line item to a canonical key using prioritized rules."""
-        cleaned_label = AccountingNumberNormalizer.clean_label(raw_label)
+        """Map a line item to a canonical key using prioritized rules and cross-checking."""
+        # Fuzzy spelling correction if raw_label needs fixing
+        corr_label, is_corr = FinancialLexiconCorrector.correct_label(
+            raw_label=raw_label,
+            item_code=item_code,
+            context=context,
+        )
+        effective_label = corr_label if is_corr else raw_label
+        cleaned_label = AccountingNumberNormalizer.clean_label(effective_label)
+        unaccented_label = AccountingNumberNormalizer.strip_accents(cleaned_label)
         warnings: List[str] = []
 
         # Target dictionary based on context or full search
@@ -521,31 +943,100 @@ class FinancialStatementParser:
         # Priority 1: Exact Item Code Match (if valid item code provided)
         if item_code:
             clean_code = item_code.zfill(2)  # "1" -> "01"
+            matching_keys: List[str] = []
             for c_key, c_meta in canon_dict.items():
-                if c_meta["code"] == clean_code or c_meta["code"] == item_code:
-                    return LineItem(
-                        raw_label=raw_label,
-                        normalized_label=cleaned_label,
-                        canonical_key=c_key,
-                        item_code=item_code,
-                        current_period_value=cur_val,
-                        previous_period_value=prev_val,
-                        unit=unit,
-                        source_page=source_page,
-                        mapping_method=MappingMethod.CODE_EXACT,
-                        mapping_status=MappingStatus.MAPPED,
-                        confidence_score=0.98,
-                    )
+                valid_codes = {c_meta["code"], c_meta["code"].zfill(2)}
+                for ac in c_meta.get("alt_codes", []):
+                    valid_codes.add(ac)
+                    valid_codes.add(ac.zfill(2))
+                if item_code in valid_codes or clean_code in valid_codes:
+                    matching_keys.append(c_key)
 
-        # Priority 2: Exact Normalized Label Match
-        for c_key, c_meta in canon_dict.items():
-            std_cleaned = AccountingNumberNormalizer.clean_label(c_meta["standard_label"])
-            if cleaned_label == std_cleaned:
+            clean_candidates: List[str] = []
+            conflict_candidates: List[str] = []
+
+            for c_key in matching_keys:
+                c_meta = canon_dict[c_key]
+                antipatterns = c_meta.get("disambiguation_antipatterns", [])
+                has_antipattern = any(
+                    anti in unaccented_label or anti in cleaned_label for anti in antipatterns
+                )
+                if c_key == "total_assets" and ("khac" in unaccented_label or "khac" in cleaned_label):
+                    has_antipattern = True
+                if c_key == "financial_expenses" and ("doanh thu" in unaccented_label or "doanh thu" in cleaned_label):
+                    has_antipattern = True
+                if c_key == "financial_income" and ("chi phi" in unaccented_label or "chi phi" in cleaned_label):
+                    has_antipattern = True
+
+                if has_antipattern:
+                    if not (c_key == "total_assets" and ("khac" in unaccented_label or "khac" in cleaned_label)):
+                        conflict_candidates.append(c_key)
+                else:
+                    clean_candidates.append(c_key)
+
+            if clean_candidates:
+                c_key = clean_candidates[0]
+                c_meta = canon_dict[c_key]
+                std_lbl = c_meta.get("standard_label", effective_label)
                 return LineItem(
                     raw_label=raw_label,
-                    normalized_label=cleaned_label,
+                    normalized_label=std_lbl,
                     canonical_key=c_key,
-                    item_code=c_meta["code"],
+                    item_code=item_code,
+                    current_period_value=cur_val,
+                    previous_period_value=prev_val,
+                    unit=unit,
+                    source_page=source_page,
+                    mapping_method=MappingMethod.CODE_EXACT,
+                    mapping_status=MappingStatus.MAPPED,
+                    confidence_score=0.98,
+                    ocr_confidence=ocr_confidence,
+                    mapping_confidence=0.98,
+                    row_consistency=1.0,
+                )
+
+            if conflict_candidates and not clean_candidates:
+                c_key = conflict_candidates[0]
+                c_meta = canon_dict[c_key]
+                return LineItem(
+                    raw_label=raw_label,
+                    normalized_label=effective_label,
+                    canonical_key=c_key,
+                    item_code=item_code,
+                    current_period_value=cur_val,
+                    previous_period_value=prev_val,
+                    unit=unit,
+                    source_page=source_page,
+                    mapping_method=MappingMethod.CODE_EXACT,
+                    mapping_status=MappingStatus.NEEDS_REVIEW,
+                    confidence_score=0.40,
+                    ocr_confidence=ocr_confidence,
+                    mapping_confidence=0.50,
+                    row_consistency=0.20,
+                    warnings=[
+                        f"Mâu thuẫn dòng: Mã số {item_code} ({c_meta['standard_label']}) xung đột với tên chỉ tiêu '{raw_label}'"
+                    ],
+                )
+
+        # Priority 2: Exact Normalized Label Match
+        clean_code = item_code.zfill(2) if item_code else None
+        for c_key, c_meta in canon_dict.items():
+            valid_codes = {c_meta["code"], c_meta["code"].zfill(2)}
+            for ac in c_meta.get("alt_codes", []):
+                valid_codes.add(ac)
+                valid_codes.add(ac.zfill(2))
+            # If item_code is present and explicitly differs from canonical key code, skip!
+            if item_code and item_code not in valid_codes and clean_code not in valid_codes:
+                continue
+
+            std_cleaned = AccountingNumberNormalizer.clean_label(c_meta["standard_label"])
+            std_unaccented = AccountingNumberNormalizer.strip_accents(std_cleaned)
+            if cleaned_label == std_cleaned or unaccented_label == std_unaccented:
+                return LineItem(
+                    raw_label=raw_label,
+                    normalized_label=c_meta["standard_label"],
+                    canonical_key=c_key,
+                    item_code=item_code or c_meta["code"],
                     current_period_value=cur_val,
                     previous_period_value=prev_val,
                     unit=unit,
@@ -553,38 +1044,68 @@ class FinancialStatementParser:
                     mapping_method=MappingMethod.LABEL_EXACT,
                     mapping_status=MappingStatus.MAPPED,
                     confidence_score=0.95,
+                    ocr_confidence=ocr_confidence,
+                    mapping_confidence=0.95,
+                    row_consistency=1.0 if item_code else 0.9,
                 )
 
         # Priority 3: Synonym Match with Disambiguation Anti-Patterns Check
         candidate_matches: List[Tuple[str, float]] = []
 
         for c_key, c_meta in canon_dict.items():
+            valid_codes = {c_meta["code"], c_meta["code"].zfill(2)}
+            for ac in c_meta.get("alt_codes", []):
+                valid_codes.add(ac)
+                valid_codes.add(ac.zfill(2))
+            # If item_code is present and explicitly differs from canonical key code, skip!
+            if item_code and item_code not in valid_codes and clean_code not in valid_codes:
+                continue
+
             # Check anti-patterns first to avoid false positives (e.g. short-term vs long-term)
             has_antipattern = any(
-                anti in cleaned_label for anti in c_meta.get("disambiguation_antipatterns", [])
+                anti in unaccented_label for anti in c_meta.get("disambiguation_antipatterns", [])
             )
+            if c_key == "total_assets" and ("khac" in unaccented_label or "khac" in cleaned_label):
+                has_antipattern = True
+            if c_key == "financial_expenses" and ("doanh thu" in unaccented_label or "doanh thu" in cleaned_label):
+                has_antipattern = True
+            if c_key == "financial_income" and ("chi phi" in unaccented_label or "chi phi" in cleaned_label):
+                has_antipattern = True
             if has_antipattern:
                 continue
 
             for syn in c_meta["synonyms"]:
                 syn_clean = AccountingNumberNormalizer.clean_label(syn)
-                if syn_clean == cleaned_label:
+                syn_unaccented = AccountingNumberNormalizer.strip_accents(syn_clean)
+                if syn_clean == cleaned_label or syn_unaccented == unaccented_label:
                     candidate_matches.append((c_key, 0.90))
                     break
-                elif syn_clean in cleaned_label or (cleaned_label in syn_clean and len(cleaned_label) >= 6):
-                    # Partial match
-                    if len(syn_clean) >= 6:  # Prevent trivial substrings
+
+                # Disallow matching standalone generic financial keywords like 'kinh doanh'
+                if unaccented_label in GENERIC_FINANCIAL_WORDS or cleaned_label in GENERIC_FINANCIAL_WORDS:
+                    continue
+
+                if syn_unaccented in unaccented_label or syn_clean in cleaned_label:
+                    candidate_matches.append((c_key, 0.85))
+                    break
+                elif unaccented_label in syn_unaccented and len(unaccented_label) >= 8:
+                    # Require at least 70% word overlap to prevent arbitrary sub-word matches
+                    syn_words = set(syn_unaccented.split())
+                    lbl_words = set(unaccented_label.split())
+                    if syn_words and (len(lbl_words & syn_words) / len(syn_words)) >= 0.70:
                         candidate_matches.append((c_key, 0.75))
                         break
 
         if len(candidate_matches) == 1:
             best_key, conf = candidate_matches[0]
             status = MappingStatus.MAPPED if conf >= 0.85 else MappingStatus.NEEDS_REVIEW
+            # Do NOT invent item_code if not verified from OCR or label exact
+            final_code = item_code if item_code else None
             return LineItem(
                 raw_label=raw_label,
-                normalized_label=cleaned_label,
+                normalized_label=canon_dict[best_key].get("standard_label", effective_label),
                 canonical_key=best_key,
-                item_code=canon_dict[best_key]["code"],
+                item_code=final_code,
                 current_period_value=cur_val,
                 previous_period_value=prev_val,
                 unit=unit,
@@ -592,20 +1113,23 @@ class FinancialStatementParser:
                 mapping_method=MappingMethod.LABEL_SYNONYM,
                 mapping_status=status,
                 confidence_score=conf,
+                ocr_confidence=ocr_confidence,
+                mapping_confidence=conf,
+                row_consistency=1.0 if item_code else 0.75,
                 warnings=warnings,
             )
         elif len(candidate_matches) > 1:
             warnings.append(
                 f"Multiple mapping candidates found ({[k for k, _ in candidate_matches]}); marked for review"
             )
-            # Pick highest confidence but mark as needs_review
             candidate_matches.sort(key=lambda x: x[1], reverse=True)
             top_key, top_conf = candidate_matches[0]
+            final_code = item_code if item_code else None
             return LineItem(
                 raw_label=raw_label,
-                normalized_label=cleaned_label,
+                normalized_label=canon_dict[top_key].get("standard_label", effective_label),
                 canonical_key=top_key,
-                item_code=canon_dict[top_key]["code"],
+                item_code=final_code,
                 current_period_value=cur_val,
                 previous_period_value=prev_val,
                 unit=unit,
@@ -613,13 +1137,16 @@ class FinancialStatementParser:
                 mapping_method=MappingMethod.LABEL_SYNONYM,
                 mapping_status=MappingStatus.NEEDS_REVIEW,
                 confidence_score=top_conf * 0.8,
+                ocr_confidence=ocr_confidence,
+                mapping_confidence=top_conf,
+                row_consistency=0.5,
                 warnings=warnings,
             )
 
         # Unmapped
         return LineItem(
             raw_label=raw_label,
-            normalized_label=cleaned_label,
+            normalized_label=effective_label,
             canonical_key=None,
             item_code=item_code,
             current_period_value=cur_val,
@@ -629,6 +1156,9 @@ class FinancialStatementParser:
             mapping_method=MappingMethod.UNMAPPED,
             mapping_status=MappingStatus.UNMAPPED,
             confidence_score=0.0,
+            ocr_confidence=ocr_confidence,
+            mapping_confidence=0.0,
+            row_consistency=0.5 if item_code else 0.0,
             warnings=["No canonical financial key matched"],
         )
 
@@ -636,40 +1166,55 @@ class FinancialStatementParser:
     def _detect_statement_type(text: str) -> str:
         """Detect which financial statement a page text belongs to."""
         lines = [l.strip() for l in text.splitlines() if l.strip()]
-        header_lines = lines[:15]
-        header_text = "\n".join(header_lines).upper()
+        header_lines = lines[:20]
+        header_text = "\n".join(header_lines)
+        header_unaccented = AccountingNumberNormalizer.strip_accents(header_text).upper()
 
         # If it's a Table of Contents (Mục lục), do not misidentify as statement
-        if "MỤC LỤC" in header_text or "MUC LUC" in header_text:
+        if "MUC LUC" in header_unaccented or "TABLE OF CONTENTS" in header_unaccented:
             return "unknown"
 
-        # Check for Notes / Thuyết minh (B 09 - DN)
-        if (
-            re.search(r"B\s*09\s*-\s*DN", header_text)
-            or any(("BẢN THUYẾT MINH" in l.upper() or "BAN THUYET MINH" in l.upper()) and len(l) < 60 for l in header_lines)
-        ):
-            return "notes"
+        # Filter out statutory footer disclaimer from header text before checking Notes
+        # e.g. 'Cac thuyet minh dinh kem la bo phan hop thanh...'
+        filtered_unaccented = "\n".join([
+            l for l in header_unaccented.splitlines()
+            if not any(k in l for k in ["DINH KEM", "HOP THANH", "BO PHAN"])
+        ])
 
-        # Check for Balance Sheet (B 01 - DN)
+        # Check Balance Sheet / Báo cáo tình hình tài chính / Bảng cân đối kế toán
         if (
-            re.search(r"B\s*01\s*-\s*DN", header_text)
-            or any(("BẢNG CÂN ĐỐI KẾ TOÁN" in l.upper() or "BANG CAN DOI KE TOAN" in l.upper()) and len(l) < 60 for l in header_lines)
+            re.search(r"\bB\s*01[a-z]?\b", header_text, re.I)
+            or "CAN DOI KE TOAN" in filtered_unaccented
+            or "TINH HINH TAI CHINH" in filtered_unaccented
         ):
             return "balance_sheet"
 
-        # Check for Income Statement (B 02 - DN)
+        # Check Income Statement / Kết quả kinh doanh
         if (
-            re.search(r"B\s*02\s*-\s*DN", header_text)
-            or any(("KẾT QUẢ HOẠT ĐỘNG KINH DOANH" in l.upper() or "KET QUA HOAT DONG KINH DOANH" in l.upper()) and len(l) < 60 for l in header_lines)
+            re.search(r"\bB\s*02[a-z]?\b", header_text, re.I)
+            or "KET QUA HOAT DONG KINH DOANH" in filtered_unaccented
+            or "KET QUA KINH DOANH" in filtered_unaccented
+            or ("KT QU" in filtered_unaccented and "KINH DOANH" in filtered_unaccented)
+            or ("HOT DNG KINH DOANH" in filtered_unaccented and "BAO CAO" in filtered_unaccented)
         ):
             return "income_statement"
 
-        # Check for Cash Flow (B 03 - DN)
+        # Check Cash Flow / Lưu chuyển tiền tệ
         if (
-            re.search(r"B\s*03\s*-\s*DN", header_text)
-            or any(("LƯU CHUYỂN TIỀN TỆ" in l.upper() or "LUU CHUYEN TIEN TE" in l.upper() or "LUU CHUYÊN TIÊN TÊ" in l.upper()) and len(l) < 60 for l in header_lines)
+            re.search(r"\bB\s*03[a-z]?\b", header_text, re.I)
+            or "LUU CHUYEN TIEN TE" in filtered_unaccented
+            or "LUU CHUYN TIN T" in filtered_unaccented
+            or "LUU CHUYEN TIEN" in filtered_unaccented
         ):
             return "cash_flow"
+
+        # Check Notes / Thuyết minh (B 09 - DN)
+        if (
+            re.search(r"\bB\s*09[a-z]?\b", header_text, re.I)
+            or "BAN THUYET MINH" in filtered_unaccented
+            or "THUYET MINH BAO CAO TAI CHINH" in filtered_unaccented
+        ):
+            return "notes"
 
         return "unknown"
 
@@ -706,6 +1251,10 @@ class FinancialStatementParser:
         matches = re.findall(r"(?:CÔNG TY|CONG TY)\s+[A-Z0-9À-Ỹ\s\.\-]+(?:\n|$)", text, re.IGNORECASE)
         for m in matches:
             clean = m.strip()
-            if not any(k in clean.upper() for k in ["KIỂM TOÁN", "KIEM TOAN", "AUDIT", "TNHH KIỂM TOÁN"]):
+            if not any(k in clean.upper() for k in [
+                "KIỂM TOÁN", "KIEM TOAN", "AUDIT", "TNHH KIỂM TOÁN",
+                "KPMG", "PWC", "DELOITTE", "ERNST & YOUNG", "PRICEWATERHOUSECOOPERS",
+                "GRANT THORNTON", "BDO", "A&C",
+            ]):
                 return clean
         return matches[0].strip() if matches else None
