@@ -22,10 +22,11 @@ python-dotenv>=1.0.0
 # 5. Giao diện trực quan Dashboard
 streamlit>=1.35.0
 
-# 6. Động cơ OCR PaddleOCR (Hỗ trợ GPU NVIDIA CUDA & CPU)
-paddlepaddle-gpu>=3.0.0; platform_system=="Windows" or platform_system=="Linux"
+# 6. Động cơ OCR PaddleOCR (Tối ưu tương thích Cloud CPU & Linux)
+paddlepaddle>=2.5.2,<=2.6.2
 paddleocr>=2.7.0
-opencv-python>=4.8.0
+opencv-python-headless>=4.8.0
 
-# 7. Kiểm thử tự động (Quality Assurance)
+# 7. Kiểm thử tự động (Optional)
 pytest>=8.0.0
+
