@@ -58,10 +58,23 @@ def render_header(
     currency: str = "VND",
     source_name: Optional[str] = None,
     extraction_method: Optional[str] = None,
+    as_of_date: Optional[str] = None,
+    period: Optional[str] = None,
 ) -> None:
     """Render the dashboard top banner with company and document metadata."""
     display_company = company_name or "Doanh nghiệp (Chưa xác định tên từ BCTC)"
-    display_year = f"Năm tài chính: {fiscal_year}" if fiscal_year else "Năm tài chính: Chưa xác định"
+    
+    if as_of_date:
+        display_date = f"Ngày báo cáo: {as_of_date}"
+        if fiscal_year and str(fiscal_year) not in as_of_date:
+            display_date += f" (Năm {fiscal_year})"
+    elif fiscal_year:
+        display_date = f"Năm tài chính: {fiscal_year}"
+    elif period:
+        display_date = f"Kỳ báo cáo: {period}"
+    else:
+        display_date = "Kỳ báo cáo: Chưa xác định"
+
     display_source = f"Nguồn: {source_name}" if source_name else "Nguồn: Tải lên trực tiếp"
     display_method = f"Phương thức: {extraction_method}" if extraction_method else "Chuẩn hóa TT200"
 
@@ -70,7 +83,7 @@ def render_header(
         <h1>📊 BÁO CÁO PHÂN TÍCH SỨC KHỎE TÀI CHÍNH DOANH NGHIỆP</h1>
         <p><strong>{display_company}</strong></p>
         <div style="margin-top: 0.5rem;">
-            <span class="meta-tag">📅 {display_year}</span>
+            <span class="meta-tag">📅 {display_date}</span>
             <span class="meta-tag">💰 Đơn vị: {currency}</span>
             <span class="meta-tag">📄 {display_source}</span>
             <span class="meta-tag">🔍 {display_method}</span>
@@ -88,9 +101,15 @@ def render_top_action_bar(
     """Render top action bar with compact metadata and quick JSON/CSV download buttons."""
     c_info, c_btn1, c_btn2 = st.columns([2.5, 1, 1])
     company_name = assessment.company_name or "Doanh nghiệp"
-    year_str = f"Năm {assessment.fiscal_year}" if assessment.fiscal_year else "Kỳ phân tích"
+    as_of = getattr(assessment, "as_of_date", None) or (report.as_of_date if report else None)
+    if as_of:
+        year_str = f"Tại ngày {as_of}"
+    elif assessment.fiscal_year:
+        year_str = f"Năm {assessment.fiscal_year}"
+    else:
+        year_str = "Kỳ phân tích"
     company_tag = company_name.replace(" ", "_")
-    fiscal_tag = assessment.fiscal_year or "period"
+    fiscal_tag = getattr(assessment, "as_of_date", None) or assessment.fiscal_year or "period"
 
     with c_info:
         st.markdown(
@@ -212,22 +231,77 @@ def parse_cell_to_decimal(val: Any) -> Optional[Decimal]:
 
 
 def get_statement_column_names(report: Optional[FinancialReport]) -> Tuple[Tuple[str, str], Tuple[str, str]]:
-    """Determine period column names for Balance Sheet and Income Statement based on fiscal date/year.
+    """Determine period column names for Balance Sheet and Income Statement based on extracted dates or fiscal year.
     
     Returns:
         ((bs_cur_col, bs_prev_col), (is_cur_col, is_prev_col))
     """
-    if report and report.fiscal_year:
+    if not report:
+        return ("Kỳ này (VND)", "Kỳ trước (VND)"), ("Kỳ này (VND)", "Kỳ trước (VND)")
+
+    # 1. Balance Sheet period columns
+    bs_cur = None
+    bs_prev = None
+
+    if report.balance_sheet:
+        cur_raw = getattr(report.balance_sheet, "current_period_name", None)
+        prev_raw = getattr(report.balance_sheet, "previous_period_name", None)
+        if cur_raw and prev_raw:
+            as_of = report.balance_sheet.as_of_date or getattr(report, "as_of_date", None)
+            if "cuối" in cur_raw.lower() and as_of:
+                bs_cur = f"{as_of} ({cur_raw})"
+                year = report.fiscal_year
+                if year:
+                    bs_prev = f"01/01/{year} ({prev_raw})"
+                else:
+                    bs_prev = prev_raw
+            else:
+                bs_cur = cur_raw
+                bs_prev = prev_raw
+
+    if not bs_cur:
+        as_of = (report.balance_sheet.as_of_date if report.balance_sheet else None) or getattr(report, "as_of_date", None)
         year = report.fiscal_year
-        bs_cur = f"31/12/{year}"
-        bs_prev = f"01/01/{year}"
-        is_cur = f"Năm {year}"
-        is_prev = f"Năm {year - 1}"
-    else:
-        bs_cur = "Kỳ này (VND)"
-        bs_prev = "Kỳ trước (VND)"
-        is_cur = "Kỳ này (VND)"
-        is_prev = "Kỳ trước (VND)"
+        if as_of:
+            bs_cur = as_of
+            if year:
+                bs_prev = f"01/01/{year}"
+            else:
+                bs_prev = "Kỳ trước (VND)"
+        elif year:
+            bs_cur = f"31/12/{year}"
+            bs_prev = f"01/01/{year}"
+        else:
+            bs_cur = "Kỳ này (VND)"
+            bs_prev = "Kỳ trước (VND)"
+
+    # 2. Income Statement period columns
+    is_cur = None
+    is_prev = None
+
+    if report.income_statement:
+        cur_raw = getattr(report.income_statement, "current_period_name", None)
+        prev_raw = getattr(report.income_statement, "previous_period_name", None)
+        if cur_raw and prev_raw:
+            is_cur = cur_raw
+            is_prev = prev_raw
+
+    if not is_cur:
+        period = (report.income_statement.period if report.income_statement else None) or getattr(report, "period", None)
+        year = report.fiscal_year
+        if period and "năm" in period.lower() and year:
+            is_cur = f"Năm {year}"
+            is_prev = f"Năm {year - 1}"
+        elif period:
+            is_cur = period
+            is_prev = f"{period} (Kỳ trước)"
+        elif year:
+            is_cur = f"Năm {year}"
+            is_prev = f"Năm {year - 1}"
+        else:
+            is_cur = "Kỳ này (VND)"
+            is_prev = "Kỳ trước (VND)"
+
     return (bs_cur, bs_prev), (is_cur, is_prev)
 
 

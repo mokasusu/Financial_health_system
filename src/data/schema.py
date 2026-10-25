@@ -61,6 +61,8 @@ class BalanceSheet(BaseModel):
     statement_name: str = "BẢNG CÂN ĐỐI KẾ TOÁN"
     as_of_date: Optional[str] = Field(default=None, description="Report date e.g. 31/12/2020")
     currency: str = Field(default="VND")
+    current_period_name: Optional[str] = Field(default=None, description="Tên cột kỳ hiện tại e.g. 31/12/2020 hoặc Số cuối năm")
+    previous_period_name: Optional[str] = Field(default=None, description="Tên cột kỳ trước e.g. 01/01/2020 hoặc Số đầu năm")
     items: Dict[str, LineItem] = Field(
         default_factory=dict,
         description="Mapped canonical items keyed by canonical_key"
@@ -148,6 +150,8 @@ class IncomeStatement(BaseModel):
     statement_name: str = "BÁO CÁO KẾT QUẢ HOẠT ĐỘNG KINH DOANH"
     period: Optional[str] = Field(default=None, description="e.g. Năm 2020 or Quý 4/2020")
     currency: str = Field(default="VND")
+    current_period_name: Optional[str] = Field(default=None, description="Tên cột kỳ hiện tại e.g. Năm 2020")
+    previous_period_name: Optional[str] = Field(default=None, description="Tên cột kỳ trước e.g. Năm 2019")
     items: Dict[str, LineItem] = Field(default_factory=dict)
     unmapped_items: List[LineItem] = Field(default_factory=list)
 
@@ -270,6 +274,8 @@ class FinancialReport(BaseModel):
     company_name: Optional[str] = None
     stock_ticker: Optional[str] = None
     fiscal_year: Optional[int] = None
+    as_of_date: Optional[str] = Field(default=None, description="Ngày khóa sổ/thời điểm lập BCTC e.g. 31/12/2020")
+    period: Optional[str] = Field(default=None, description="Kỳ báo cáo e.g. Năm 2020 hoặc Quý 1/2026")
     report_type: Optional[str] = None
     unit: str = "VND"
     balance_sheet: Optional[BalanceSheet] = None

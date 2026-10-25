@@ -45,6 +45,8 @@ def export_analysis_to_json(
         "metadata": {
             "company_name": assessment.company_name or "Chưa xác định",
             "fiscal_year": assessment.fiscal_year,
+            "as_of_date": getattr(assessment, "as_of_date", None) or (report.as_of_date if report else None),
+            "period": getattr(assessment, "period", None) or (report.period if report else None),
             "currency": assessment.currency,
             "rule_set_version": assessment.rule_set_version,
             "exported_at": datetime.now(timezone.utc).isoformat(),

@@ -57,6 +57,8 @@ class FinancialRatioReport(BaseModel):
     """Consolidated financial ratio report across all 4 standard analytical groups."""
     company_name: Optional[str] = None
     fiscal_year: Optional[int] = None
+    as_of_date: Optional[str] = None
+    period: Optional[str] = None
     currency: str = "VND"
     ratios: Dict[str, RatioResult] = Field(default_factory=dict, description="All ratios indexed by ratio_key")
     categories: Dict[str, List[RatioResult]] = Field(default_factory=dict, description="Ratios grouped by category")
@@ -266,6 +268,8 @@ class FinancialRatioCalculator:
         return FinancialRatioReport(
             company_name=report.company_name,
             fiscal_year=report.fiscal_year,
+            as_of_date=getattr(report, "as_of_date", None),
+            period=getattr(report, "period", None),
             currency=report.unit,
             ratios=ratios,
             categories=categories,

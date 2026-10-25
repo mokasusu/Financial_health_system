@@ -617,11 +617,13 @@ class FinancialStatementParser:
         balance_sheet = BalanceSheet()
         income_statement = IncomeStatement()
 
-        # Step 1: Detect Document metadata (unit, fiscal year, company name)
+        # Step 1: Detect Document metadata (unit, fiscal year, company name, dates)
         full_text = "\n".join(text for _, text, _ in pages_to_process)
         detected_unit = self._detect_unit(full_text)
-        fiscal_year = self._detect_fiscal_year(full_text)
         company_name = self._detect_company_name(full_text)
+        detected_as_of_date, detected_year = self._detect_as_of_date(full_text)
+        detected_period, is_year = self._detect_period_label(full_text)
+        fiscal_year = detected_year or is_year or self._detect_fiscal_year(full_text)
 
         balance_sheet.currency = detected_unit
         income_statement.currency = detected_unit
@@ -633,6 +635,22 @@ class FinancialStatementParser:
             page_context = self._detect_statement_type(text)
             if page_context != "unknown":
                 current_context = page_context
+
+            # If page is balance_sheet, refine as_of_date and fiscal_year from page header
+            if current_context == "balance_sheet":
+                page_date, page_year = self._detect_as_of_date(text)
+                if page_date:
+                    balance_sheet.as_of_date = page_date
+                    detected_as_of_date = page_date
+                if page_year:
+                    fiscal_year = page_year
+            elif current_context == "income_statement":
+                page_period, page_is_year = self._detect_period_label(text)
+                if page_period:
+                    income_statement.period = page_period
+                    detected_period = page_period
+                if page_is_year and not fiscal_year:
+                    fiscal_year = page_is_year
 
             # Method A: Process structured tables if present (from pdfplumber)
             if tables:
@@ -656,9 +674,28 @@ class FinancialStatementParser:
                 is_=income_statement,
             )
 
+        final_as_of = balance_sheet.as_of_date or detected_as_of_date
+        final_period = income_statement.period or detected_period
+        if not fiscal_year:
+            if final_as_of:
+                m_y = re.search(r"\b((?:19|20)\d{2})\b", final_as_of)
+                if m_y:
+                    fiscal_year = int(m_y.group(1))
+            elif final_period:
+                m_y = re.search(r"\b((?:19|20)\d{2})\b", final_period)
+                if m_y:
+                    fiscal_year = int(m_y.group(1))
+
+        if not balance_sheet.as_of_date and final_as_of:
+            balance_sheet.as_of_date = final_as_of
+        if not income_statement.period and final_period:
+            income_statement.period = final_period
+
         return FinancialReport(
             company_name=company_name,
             fiscal_year=fiscal_year,
+            as_of_date=final_as_of,
+            period=final_period,
             unit=detected_unit,
             source_document=doc_name,
             balance_sheet=balance_sheet,
@@ -720,6 +757,20 @@ class FinancialStatementParser:
                 clean_tds = [re.sub(r"<[^>]+>", "", td).strip() for td in tds]
                 if clean_tds:
                     expanded_tds = self._expand_cell_tokens(clean_tds)
+                    # Check for table header column dates/periods if not yet recognized
+                    if context == "balance_sheet" and not bs.current_period_name:
+                        c_cur, c_prev = self._detect_column_headers(expanded_tds, context)
+                        if c_cur:
+                            bs.current_period_name = c_cur
+                            bs.previous_period_name = c_prev
+                            if not bs.as_of_date and re.fullmatch(r"\d{2}/\d{2}/\d{4}", c_cur):
+                                bs.as_of_date = c_cur
+                    elif context == "income_statement" and not is_.current_period_name:
+                        c_cur, c_prev = self._detect_column_headers(expanded_tds, context)
+                        if c_cur:
+                            is_.current_period_name = c_cur
+                            is_.previous_period_name = c_prev
+
                     self._process_row_tokens(expanded_tds, page_num, context, unit, bs, is_)
             return
 
@@ -736,6 +787,20 @@ class FinancialStatementParser:
                 continue
 
             expanded_tokens = self._expand_cell_tokens(tokens)
+
+            # Check if this line is a table header row (e.g. Mã số \t Thuyết minh \t 31/3/2026 \t 1/1/2026)
+            if context == "balance_sheet" and not bs.current_period_name:
+                c_cur, c_prev = self._detect_column_headers(expanded_tokens, context)
+                if c_cur:
+                    bs.current_period_name = c_cur
+                    bs.previous_period_name = c_prev
+                    if not bs.as_of_date and re.fullmatch(r"\d{2}/\d{2}/\d{4}", c_cur):
+                        bs.as_of_date = c_cur
+            elif context == "income_statement" and not is_.current_period_name:
+                c_cur, c_prev = self._detect_column_headers(expanded_tokens, context)
+                if c_cur:
+                    is_.current_period_name = c_cur
+                    is_.previous_period_name = c_prev
 
             # Check if this line contains any numeric values
             has_numbers = False
@@ -783,6 +848,20 @@ class FinancialStatementParser:
             clean_row = [str(cell).strip() if cell is not None else "" for cell in row]
             if any(clean_row):
                 expanded_row = self._expand_cell_tokens(clean_row)
+                # Check for table header column dates/periods if not yet recognized
+                if context == "balance_sheet" and not bs.current_period_name:
+                    c_cur, c_prev = self._detect_column_headers(expanded_row, context)
+                    if c_cur:
+                        bs.current_period_name = c_cur
+                        bs.previous_period_name = c_prev
+                        if not bs.as_of_date and re.fullmatch(r"\d{2}/\d{2}/\d{4}", c_cur):
+                            bs.as_of_date = c_cur
+                elif context == "income_statement" and not is_.current_period_name:
+                    c_cur, c_prev = self._detect_column_headers(expanded_row, context)
+                    if c_cur:
+                        is_.current_period_name = c_cur
+                        is_.previous_period_name = c_prev
+
                 self._process_row_tokens(expanded_row, page_num, context, unit, bs, is_)
 
     def _process_row_tokens(
@@ -1174,6 +1253,12 @@ class FinancialStatementParser:
         if "MUC LUC" in header_unaccented or "TABLE OF CONTENTS" in header_unaccented:
             return "unknown"
 
+        # Exclude management/audit/directors reports from statement detection
+        if any(k in header_unaccented for k in [
+            "BAO CAO KIEM TOAN", "BAO CAO CUA BAN DIEU HANH", "BAN DIEU HANH", "BAN KIEM SOAT", "Y KIEN KIEM TOAN"
+        ]):
+            return "unknown"
+
         # Filter out statutory footer disclaimer from header text before checking Notes
         # e.g. 'Cac thuyet minh dinh kem la bo phan hop thanh...'
         filtered_unaccented = "\n".join([
@@ -1185,7 +1270,8 @@ class FinancialStatementParser:
         if (
             re.search(r"\bB\s*01[a-z]?\b", header_text, re.I)
             or "CAN DOI KE TOAN" in filtered_unaccented
-            or "TINH HINH TAI CHINH" in filtered_unaccented
+            or "BAO CAO TINH HINH TAI CHINH" in filtered_unaccented
+            or ("TINH HINH TAI CHINH" in filtered_unaccented and ("TAI NGAY" in filtered_unaccented or "MA SO" in filtered_unaccented))
         ):
             return "balance_sheet"
 
@@ -1238,11 +1324,181 @@ class FinancialStatementParser:
         return "VND"
 
     @staticmethod
-    def _detect_fiscal_year(text: str) -> Optional[int]:
+    def _detect_as_of_date(text: str) -> Tuple[Optional[str], Optional[int]]:
+        """Extract explicit reporting date (DD/MM/YYYY) and fiscal year from statement text."""
+        text_clean = text.replace("\r", " ").replace("\n", " ")
+
+        # 1. Tại ngày DD tháng MM năm YYYY
+        m = re.search(r"(?:tại\s+ngày|ngày)\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+((?:19|20)\d{2})", text_clean, re.I)
+        if m:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        # 2. kết thúc (vào) ngày DD tháng MM năm YYYY
+        m = re.search(r"kết\s+thúc\s+(?:vào\s+)?ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+((?:19|20)\d{2})", text_clean, re.I)
+        if m:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        # 3. Tại ngày / kết thúc ngày DD/MM/YYYY
+        m = re.search(r"(?:tại\s+ngày|kết\s+thúc\s+ngày|ngày|tại)\s*[:\-]?\s*(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})", text_clean, re.I)
+        if m:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        # 4. As at / As of DD Month YYYY or DD/MM/YYYY
+        month_map = {
+            "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+            "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+        }
+        m = re.search(r"as\s+(?:at|of)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+((?:19|20)\d{2})", text_clean, re.I)
+        if m:
+            d, mo_str, y = int(m.group(1)), m.group(2).lower(), int(m.group(3))
+            mo = month_map.get(mo_str)
+            if mo and 1 <= d <= 31:
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        m_asof = re.search(r"as\s+(?:at|of)\s*[:\-]?\s*(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})", text_clean, re.I)
+        if m_asof:
+            d, mo, y = int(m_asof.group(1)), int(m_asof.group(2)), int(m_asof.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        # 5. Cho năm tài chính kết thúc ngày 31/12/YYYY
+        m = re.search(r"(?:cho\s+năm\s+tài\s+chính|năm\s+tài\s+chính).*?(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})", text_clean, re.I)
+        if m:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        # 6. Look for standard reporting date 31/12/YYYY or 30/06/YYYY or 31/03/YYYY
+        m = re.search(r"\b(3[01]|0[1-9]|[12]\d)[/-](0[1-9]|1[0-2])[/-]((?:19|20)\d{2})\b", text_clean)
+        if m:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if f"{d:02d}/{mo:02d}/{y}" != "22/12/2014":
+                return f"{d:02d}/{mo:02d}/{y}", y
+
+        return None, None
+
+    @staticmethod
+    def _detect_period_label(text: str) -> Tuple[Optional[str], Optional[int]]:
+        """Extract period label e.g. 'Năm 2020', 'Quý 1/2026', '6 tháng 2024'."""
+        text_clean = text.replace("\r", " ").replace("\n", " ")
+
+        # 1. Quý X/YYYY
+        m_q = re.search(r"quý\s*(\d|\b[IVXLCDM]+\b)[/-]?\s*(?:năm\s*)?((?:19|20)\d{2})", text_clean, re.I)
+        if m_q:
+            q_num = m_q.group(1)
+            y = int(m_q.group(2))
+            return f"Quý {q_num}/{y}", y
+
+        # 2. 6 tháng đầu năm YYYY / Bán niên YYYY
+        m_semi = re.search(r"(?:6\s+tháng\s+(?:đầu\s+năm\s+)?|bán\s+niên\s*)((?:19|20)\d{2})", text_clean, re.I)
+        if m_semi:
+            y = int(m_semi.group(1))
+            return f"6 tháng {y}", y
+
+        # 3. Cho năm tài chính kết thúc ngày DD/MM/YYYY
+        m_end = re.search(r"kết\s+thúc\s+(?:vào\s+)?ngày\s+(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})", text_clean, re.I)
+        if not m_end:
+            m_end = re.search(r"kết\s+thúc\s+(?:vào\s+)?ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+((?:19|20)\d{2})", text_clean, re.I)
+        if m_end:
+            d, mo, y = int(m_end.group(1)), int(m_end.group(2)), int(m_end.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                if d == 31 and mo == 12:
+                    return f"Năm {y}", y
+                return f"Kỳ kết thúc {d:02d}/{mo:02d}/{y}", y
+
+        # 4. Năm YYYY (specifically in header)
+        m_yr = re.search(r"\bnăm\s+((?:19|20)\d{2})\b", text_clean, re.I)
+        if m_yr:
+            y = int(m_yr.group(1))
+            if y != 2014:  # ignore circular 200 year
+                return f"Năm {y}", y
+
+        return None, None
+
+    @staticmethod
+    def _detect_column_headers(row_cells: List[str], context: str) -> Tuple[Optional[str], Optional[str]]:
+        """Identify current and previous period column headers from a table row or token list."""
+        row_text = " ".join(str(c).strip() for c in row_cells if c is not None)
+        if not row_text.strip():
+            return None, None
+
+        l_row = row_text.lower()
+        # Ignore obvious statement title lines unless it contains table columns like 'mã số'
+        if any(t in l_row for t in ["báo cáo", "báo cáo tài chính", "bộ tài chính", "thông tư", "ban hành", "mẫu số", "mẫu b"]):
+            if not ("mã số" in l_row and re.search(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}", row_text)):
+                return None, None
+
+        # 1. Search for explicit date pairs e.g. 31/12/2020 and 01/01/2020 or 31/3/2026 and 1/1/2026
+        date_matches = re.finditer(r"\b(\d{1,2})[/.-](\d{1,2})[/.-]((?:19|20)\d{2})\b", row_text)
+        found_dates: List[str] = []
+        for m in date_matches:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                found_dates.append(f"{d:02d}/{mo:02d}/{y}")
+
+        if len(found_dates) >= 2:
+            return found_dates[0], found_dates[1]
+        elif len(found_dates) == 1 and context == "balance_sheet":
+            if any(k in l_row for k in ["mã số", "thuyết minh", "chỉ tiêu", "đơn vị tính"]):
+                return found_dates[0], None
+
+        # 2. Search for explicit year tokens e.g. Năm 2020 / Năm 2019
+        years = re.findall(r"\bnăm\s+((?:19|20)\d{2})\b", row_text, re.I)
+        if len(years) >= 2:
+            return f"Năm {years[0]}", f"Năm {years[1]}"
+        elif len(years) == 1 and context == "income_statement":
+            if any(k in l_row for k in ["chỉ tiêu", "mã số", "thuyết minh", "đơn vị tính"]):
+                y = int(years[0])
+                if y != 2014:
+                    return f"Năm {y}", f"Năm {y - 1}"
+
+        # 3. Search for Quý tokens e.g. Quý 1/2026 / Quý 1/2025
+        q_matches = re.findall(r"quý\s*(\d|\b[IVXLCDM]+\b)[/-]?\s*(?:năm\s*)?((?:19|20)\d{2})", row_text, re.I)
+        if len(q_matches) >= 2:
+            return f"Quý {q_matches[0][0]}/{q_matches[0][1]}", f"Quý {q_matches[1][0]}/{q_matches[1][1]}"
+
+        # 4. Standard Vietnamese period descriptors
+        if "cuối năm" in l_row and "đầu năm" in l_row:
+            return "Số cuối năm", "Số đầu năm"
+        if "cuối kỳ" in l_row and "đầu năm" in l_row:
+            return "Số cuối kỳ", "Số đầu năm"
+        if "cuối kỳ" in l_row and "đầu kỳ" in l_row:
+            return "Số cuối kỳ", "Số đầu kỳ"
+        if "năm nay" in l_row and "năm trước" in l_row:
+            return "Năm nay", "Năm trước"
+        if "kỳ này" in l_row and "kỳ trước" in l_row:
+            return "Kỳ này", "Kỳ trước"
+
+        return None, None
+
+    @classmethod
+    def _detect_fiscal_year(cls, text: str) -> Optional[int]:
         """Detect fiscal year from statements e.g. 2020 or 31/12/2020."""
-        match = re.search(r"(?:năm|nam|31/12/|31-12-)\s*(\d{4})", text, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
+        # 1. Try extracting from as_of_date
+        _, y = cls._detect_as_of_date(text)
+        if y:
+            return y
+        # 2. Try extracting from period label e.g. 'Năm 2020' or 'Quý 1/2026'
+        _, y = cls._detect_period_label(text)
+        if y:
+            return y
+        # 3. Fallback regex, ignoring statutory 2014 from TT200/2014
+        matches = re.finditer(r"(?:cho\s+năm\s+tài\s+chính|năm\s+tài\s+chính|năm|nam|31/12/|31-12-)\s*(\d{4})", text, re.IGNORECASE)
+        for m in matches:
+            yr = int(m.group(1))
+            span_start = max(0, m.start() - 30)
+            prefix = text[span_start:m.start()].upper()
+            if "200/2014" in prefix or "THÔNG TƯ" in prefix:
+                continue
+            if 1990 <= yr <= 2100:
+                return yr
         return None
 
     @staticmethod

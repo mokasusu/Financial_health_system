@@ -79,6 +79,8 @@ class FinancialAssessment(BaseModel):
     """Consolidated financial health assessment combining all evaluated ratios and synthesized alerts."""
     company_name: Optional[str] = None
     fiscal_year: Optional[int] = None
+    as_of_date: Optional[str] = None
+    period: Optional[str] = None
     currency: str = "VND"
     overall_status: OverallHealthStatus = Field(description="Đánh giá tổng quan mức rule-based")
     ratio_assessments: Dict[str, RatioAssessment] = Field(

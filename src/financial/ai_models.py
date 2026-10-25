@@ -84,6 +84,7 @@ class AIInterpretationInput(BaseModel):
     """Input payload fed to the AI model prompt, focused on the 4 core KPIs."""
     company_name: Optional[str] = Field(default=None, description="Tên doanh nghiệp")
     fiscal_year: Optional[int] = Field(default=None, description="Năm tài chính")
+    as_of_date: Optional[str] = Field(default=None, description="Ngày khóa sổ/thời điểm BCTC")
     currency: str = Field(default="VND", description="Đơn vị tiền tệ")
     kpis: List[CoreKPIData] = Field(default_factory=list, description="Danh sách 4 chỉ số tài chính cốt lõi")
     
@@ -143,6 +144,7 @@ class AIInterpretationInput(BaseModel):
         return cls(
             company_name=assessment.company_name,
             fiscal_year=assessment.fiscal_year,
+            as_of_date=getattr(assessment, "as_of_date", None),
             currency=assessment.currency or "VND",
             kpis=kpi_list,
             data_limitations=list(assessment.limitations) if assessment.limitations else [],
@@ -178,10 +180,12 @@ class AIInterpretationInput(BaseModel):
         """Format input into a clean Markdown block focused strictly on the 4 core ratios."""
         company = self.company_name or "Doanh nghiệp (Chưa xác định tên)"
         year = str(self.fiscal_year) if self.fiscal_year else "N/A"
+        date_str = f"Tại ngày {self.as_of_date}" if self.as_of_date else (f"Năm {year}" if year != "N/A" else "N/A")
 
         lines = [
             "### 1. THÔNG TIN DOANH NGHIỆP:",
             f"- Đơn vị: {company}",
+            f"- Thời điểm/Kỳ báo cáo: {date_str}",
             f"- Năm tài chính: {year}",
             f"- Đơn vị tiền tệ: {self.currency}",
             "",

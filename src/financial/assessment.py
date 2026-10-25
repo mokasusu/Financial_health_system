@@ -138,6 +138,8 @@ class FinancialHealthAssessor:
         return FinancialAssessment(
             company_name=ratio_report.company_name,
             fiscal_year=ratio_report.fiscal_year,
+            as_of_date=getattr(ratio_report, "as_of_date", None),
+            period=getattr(ratio_report, "period", None),
             currency=ratio_report.currency,
             overall_status=overall_status,
             ratio_assessments=ratio_assessments,

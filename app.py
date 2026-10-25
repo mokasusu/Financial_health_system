@@ -319,14 +319,24 @@ elif st.session_state.stage == "extracted":
     # 1. Step 1 View: Interactive Statement Data Editor
     report: FinancialReport = st.session_state.report
     company_name = report.company_name or "Doanh nghiệp"
-    fiscal_year = report.fiscal_year or "Chưa xác định"
+    as_of = getattr(report, "as_of_date", None) or (report.balance_sheet.as_of_date if report.balance_sheet else None)
+    if as_of:
+        date_badge = f"Tại ngày: {as_of}"
+        if report.fiscal_year and str(report.fiscal_year) not in as_of:
+            date_badge += f" (Năm {report.fiscal_year})"
+    elif report.fiscal_year:
+        date_badge = f"Năm tài chính: {report.fiscal_year}"
+    elif getattr(report, "period", None):
+        date_badge = f"Kỳ báo cáo: {report.period}"
+    else:
+        date_badge = "Kỳ báo cáo: Chưa xác định"
 
     st.markdown(
         f"""
         <div class="dashboard-header" style="padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;">
             <h2 style="color: white; margin: 0 0 0.35rem 0; font-size: 1.4rem;">📝 RÀ SOÁT & HIỆU CHỈNH SỐ LIỆU BCTC ĐÃ NHẬN DIỆN</h2>
             <div style="color: #e6f4ef; font-size: 0.9rem;">
-                🏢 <strong>{company_name}</strong> | 📅 Năm tài chính: <strong>{fiscal_year}</strong> | 📄 Nguồn: <strong>{st.session_state.source_name}</strong>
+                🏢 <strong>{company_name}</strong> | 📅 <strong>{date_badge}</strong> | 📄 Nguồn: <strong>{st.session_state.source_name}</strong>
             </div>
         </div>
         """,
@@ -410,6 +420,8 @@ elif st.session_state.stage == "calculated":
         currency=assessment.currency,
         source_name=st.session_state.source_name,
         extraction_method=st.session_state.extraction_method,
+        as_of_date=getattr(assessment, "as_of_date", None) or getattr(report, "as_of_date", None),
+        period=getattr(assessment, "period", None) or getattr(report, "period", None),
     )
 
     # Top Action Bar: Fast export buttons + company metadata
