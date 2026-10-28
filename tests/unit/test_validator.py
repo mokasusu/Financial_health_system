@@ -1,14 +1,14 @@
 """Unit tests for FinancialValidator and accounting equation validation."""
 from decimal import Decimal
 import pytest
-from src.data.schema import (
+from src.domain.models.bctc import (
     BalanceSheet,
     CheckStatus,
     FinancialReport,
     IncomeStatement,
-    LineItem,
 )
-from src.data.validator import FinancialValidator
+from src.domain.models.line_item import LineItem
+from src.domain.accounting.validator import FinancialValidator
 
 
 class TestFinancialValidator:

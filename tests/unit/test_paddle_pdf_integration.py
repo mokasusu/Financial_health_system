@@ -6,10 +6,10 @@ import pytest
 from PIL import Image, ImageDraw
 import pymupdf
 
-from src.ocr.image_preprocessor import ImagePreprocessor
-from src.ocr.models import ExtractionMethod, LayoutRegion
-from src.ocr.paddle_engine import PaddleOCREngine
-from src.ocr.pdf_extractor import PDFExtractor
+from src.domain.models.ocr import ExtractionMethod, LayoutRegion
+from src.infrastructure.ocr.paddle_engine import PaddleOCREngine
+from src.infrastructure.ocr.preprocessor import ImagePreprocessor
+from src.infrastructure.pdf.extractor import PDFExtractor
 
 
 @pytest.fixture

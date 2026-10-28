@@ -4,8 +4,8 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from src.ocr.models import LayoutRegion
-from src.ocr.paddle_engine import (
+from src.domain.models.ocr import LayoutRegion
+from src.infrastructure.ocr.paddle_engine import (
     PaddleOCREngine,
     PaddleOCREngineError,
     get_shared_paddle_engine,

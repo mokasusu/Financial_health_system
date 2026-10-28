@@ -8,22 +8,24 @@ from decimal import Decimal
 from typing import Optional
 import pytest
 
-from src.data.parser import FinancialStatementParser
-from src.data.schema import (
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.models.bctc import (
     BalanceSheet,
     FinancialReport,
     IncomeStatement,
+)
+from src.domain.models.line_item import (
     LineItem,
     MappingMethod,
     MappingStatus,
 )
-from src.financial.ratios import (
-    FinancialRatioCalculator,
+from src.domain.models.ratios import (
     FinancialRatioReport,
     RatioCategory,
     RatioResult,
     RatioStatus,
 )
+from src.domain.ratios.engine import FinancialRatioCalculator
 
 
 def _make_line_item(

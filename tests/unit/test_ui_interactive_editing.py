@@ -3,15 +3,16 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from src.data.schema import BalanceSheet, FinancialReport, IncomeStatement, LineItem, MappingStatus
-from src.financial.ratios import (
-    FinancialRatioCalculator,
+from src.domain.models.bctc import BalanceSheet, FinancialReport, IncomeStatement
+from src.domain.models.line_item import LineItem, MappingStatus
+from src.domain.models.ratios import (
     FinancialRatioReport,
     RatioCategory,
     RatioResult,
     RatioStatus,
 )
-from src.ui.components import (
+from src.domain.ratios.engine import FinancialRatioCalculator
+from src.presentation.components import (
     _evaluate_kpi_visual,
     apply_edits_to_report,
     build_statement_dataframes,

@@ -9,17 +9,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.data.parser import FinancialStatementParser
-from src.financial.ai_interpreter import AIFinancialInterpreter, CANONICAL_RATIO_KEYS
-from src.financial.ai_models import (
+from src.application.services.ai_service import (
+    AIFinancialInterpreter,
+    CANONICAL_RATIO_KEYS,
+)
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.assessment.evaluator import FinancialHealthAssessor
+from src.domain.models.ai import (
     AIInterpretationInput,
     AIInterpretationOutput,
     AIRiskItem,
     AIStrengthItem,
     FinancialRatioInput,
 )
-from src.financial.assessment import FinancialHealthAssessor
-from src.financial.assessment_models import (
+from src.domain.models.assessment import (
     AssessmentStatus,
     FinancialAssessment,
     FinancialWarning,
@@ -28,7 +31,14 @@ from src.financial.assessment_models import (
     WarningCategory,
     WarningSeverity,
 )
-from src.financial.openrouter_client import (
+from src.domain.models.ratios import (
+    FinancialRatioReport,
+    RatioCategory,
+    RatioResult,
+    RatioStatus,
+)
+from src.domain.ratios.engine import FinancialRatioCalculator
+from src.infrastructure.ai.client import (
     AuthenticationError,
     NetworkError,
     OpenRouterClient,
@@ -36,13 +46,6 @@ from src.financial.openrouter_client import (
     RateLimitError,
     ResponseValidationError,
     ServerError,
-)
-from src.financial.ratios import (
-    FinancialRatioCalculator,
-    FinancialRatioReport,
-    RatioCategory,
-    RatioResult,
-    RatioStatus,
 )
 
 

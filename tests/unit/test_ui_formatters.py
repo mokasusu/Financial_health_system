@@ -2,14 +2,14 @@
 from decimal import Decimal
 import pytest
 
-from src.financial.assessment_models import AssessmentStatus, WarningSeverity
-from src.ui.formatters import (
+from src.domain.models.assessment import AssessmentStatus, WarningSeverity
+from src.presentation.formatters import (
     format_currency,
     format_difference,
     format_percentage,
     format_ratio_value,
 )
-from src.ui.styles import (
+from src.presentation.styles import (
     get_overall_health_banner_html,
     get_severity_badge_html,
     get_status_badge_html,

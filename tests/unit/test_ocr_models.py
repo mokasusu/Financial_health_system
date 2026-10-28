@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from src.ocr.models import (
+from src.domain.models.ocr import (
     DocumentExtractionResult,
     ExtractionMethod,
     ExtractionStatus,

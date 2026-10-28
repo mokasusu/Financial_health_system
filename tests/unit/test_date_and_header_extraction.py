@@ -3,25 +3,27 @@ from decimal import Decimal
 from pathlib import Path
 import pytest
 
-from src.data.parser import FinancialStatementParser
-from src.data.schema import (
-    FinancialReport,
+from src.application.services.export_service import export_analysis_to_json
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.assessment.evaluator import FinancialHealthAssessor
+from src.domain.models.ai import AIInterpretationInput
+from src.domain.models.bctc import (
     BalanceSheet,
+    FinancialReport,
     IncomeStatement,
+)
+from src.domain.models.line_item import (
     LineItem,
     MappingMethod,
     MappingStatus,
 )
-from src.financial.ai_models import AIInterpretationInput
-from src.financial.assessment import FinancialHealthAssessor
-from src.financial.ratios import (
-    FinancialRatioCalculator,
+from src.domain.models.ratios import (
+    FinancialRatioReport,
     RatioCategory,
     RatioResult,
-    FinancialRatioReport,
 )
-from src.ui.components import get_statement_column_names
-from src.ui.export import export_analysis_to_json
+from src.domain.ratios.engine import FinancialRatioCalculator
+from src.presentation.components.statement_tables import get_statement_column_names
 
 
 def _make_item(key: str, label: str, cur: Decimal, prev: Decimal) -> LineItem:

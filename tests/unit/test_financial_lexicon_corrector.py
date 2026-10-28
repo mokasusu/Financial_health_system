@@ -3,9 +3,10 @@ from decimal import Decimal
 import numpy as np
 import pytest
 
-from src.data.parser import FinancialLexiconCorrector, FinancialStatementParser
-from src.data.schema import MappingStatus
-from src.ocr.image_preprocessor import ImagePreprocessor
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.accounting.lexicon import FinancialLexiconCorrector
+from src.domain.models.line_item import MappingStatus
+from src.infrastructure.ocr.preprocessor import ImagePreprocessor
 
 
 class TestFinancialLexiconCorrector:

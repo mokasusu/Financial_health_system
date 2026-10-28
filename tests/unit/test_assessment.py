@@ -9,12 +9,10 @@ import json
 from typing import Dict, List, Optional
 import pytest
 
-from src.data.parser import FinancialStatementParser
-from src.financial.assessment import (
-    DEFAULT_SCREENING_THRESHOLDS,
-    FinancialHealthAssessor,
-)
-from src.financial.assessment_models import (
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.assessment.evaluator import FinancialHealthAssessor
+from src.domain.assessment.thresholds import DEFAULT_SCREENING_THRESHOLDS
+from src.domain.models.assessment import (
     AssessmentStatus,
     FinancialAssessment,
     FinancialWarning,
@@ -23,13 +21,15 @@ from src.financial.assessment_models import (
     WarningCategory,
     WarningSeverity,
 )
-from src.financial.ratios import (
-    FinancialRatioCalculator,
+from src.domain.models.ratios import (
     FinancialRatioReport,
     RatioCategory,
     RatioResult,
     RatioStatus,
+)
+from src.domain.ratios.engine import (
     RATIO_METADATA,
+    FinancialRatioCalculator,
 )
 
 

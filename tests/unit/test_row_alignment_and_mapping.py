@@ -12,11 +12,11 @@ Covers the 8 mandatory test criteria:
 """
 from decimal import Decimal
 import pytest
-from src.data.normalizer import AccountingNumberNormalizer, NumberStatus
-from src.data.parser import FinancialStatementParser
-from src.data.schema import MappingMethod, MappingStatus
-from src.ocr.models import DocumentExtractionResult, PageExtractionResult
-from src.ocr.paddle_engine import PaddleOCREngine
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.accounting.normalizer import AccountingNumberNormalizer, NumberStatus
+from src.domain.models.line_item import MappingMethod, MappingStatus
+from src.domain.models.ocr import DocumentExtractionResult, PageExtractionResult
+from src.infrastructure.ocr.paddle_engine import PaddleOCREngine
 
 
 class TestRowAlignmentAndFinancialMapping:

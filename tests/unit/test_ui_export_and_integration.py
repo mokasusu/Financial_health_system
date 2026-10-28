@@ -6,11 +6,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app import execute_pipeline
-from src.data.parser import FinancialStatementParser
-from src.data.schema import FinancialReport, ValidationCheck, ValidationResult, CheckStatus
-from src.financial.ai_models import AIInterpretationOutput, AIRiskItem, AIStrengthItem
-from src.financial.assessment import FinancialHealthAssessor
-from src.financial.assessment_models import (
+from src.application.services.export_service import (
+    export_analysis_to_json,
+    export_ratios_to_csv,
+    export_warnings_to_csv,
+)
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.assessment.evaluator import FinancialHealthAssessor
+from src.domain.models.ai import AIInterpretationOutput, AIRiskItem, AIStrengthItem
+from src.domain.models.assessment import (
     AssessmentStatus,
     FinancialAssessment,
     FinancialWarning,
@@ -19,12 +23,9 @@ from src.financial.assessment_models import (
     WarningCategory,
     WarningSeverity,
 )
-from src.financial.ratios import FinancialRatioCalculator, RatioCategory
-from src.ui.export import (
-    export_analysis_to_json,
-    export_ratios_to_csv,
-    export_warnings_to_csv,
-)
+from src.domain.models.bctc import CheckStatus, FinancialReport, ValidationCheck, ValidationResult
+from src.domain.models.ratios import RatioCategory
+from src.domain.ratios.engine import FinancialRatioCalculator
 
 
 @pytest.fixture

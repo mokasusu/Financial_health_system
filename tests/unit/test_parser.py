@@ -1,9 +1,9 @@
 """Unit tests for FinancialStatementParser and Semantic Mapping."""
 from decimal import Decimal
 import pytest
-from src.data.parser import FinancialStatementParser
-from src.data.schema import MappingMethod, MappingStatus
-from src.ocr.models import DocumentExtractionResult, PageExtractionResult
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.models.line_item import MappingMethod, MappingStatus
+from src.domain.models.ocr import DocumentExtractionResult, PageExtractionResult
 
 
 class TestFinancialStatementParser:

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.financial.openrouter_client import (
+from src.infrastructure.ai.client import (
     AuthenticationError,
     ConfigurationError,
     NetworkError,

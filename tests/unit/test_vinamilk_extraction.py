@@ -1,8 +1,8 @@
 """Unit tests verifying full financial statement extraction for Vinamilk Form B 01a / B 02a."""
 from decimal import Decimal
 import pytest
-from src.data.parser import FinancialStatementParser
-from src.financial.ratios import FinancialRatioCalculator
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.ratios.engine import FinancialRatioCalculator
 
 
 @pytest.fixture

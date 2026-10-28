@@ -1,7 +1,7 @@
 """Unit tests for AccountingNumberNormalizer."""
 from decimal import Decimal
 import pytest
-from src.data.normalizer import AccountingNumberNormalizer, NumberStatus
+from src.domain.accounting.normalizer import AccountingNumberNormalizer, NumberStatus
 
 
 class TestAccountingNumberNormalizer:

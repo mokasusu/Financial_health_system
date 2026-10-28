@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from src.ocr.image_preprocessor import ImagePreprocessor
+from src.infrastructure.ocr.preprocessor import ImagePreprocessor
 
 
 def test_preprocessor_init_defaults():

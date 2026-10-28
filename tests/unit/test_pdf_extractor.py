@@ -6,18 +6,18 @@ import pytest
 from PIL import Image, ImageDraw
 import pymupdf
 
-from src.data.parser import FinancialStatementParser
-from src.data.validator import FinancialValidator
-from src.financial.ratios import FinancialRatioCalculator
-from src.ocr.models import (
+from src.application.services.parsing_service import FinancialStatementParser
+from src.domain.accounting.validator import FinancialValidator
+from src.domain.models.ocr import (
     DocumentExtractionResult,
     ExtractionMethod,
     ExtractionStatus,
     LayoutRegion,
     PageExtractionResult,
 )
-from src.ocr.paddle_engine import PaddleOCREngine
-from src.ocr.pdf_extractor import PDFExtractor
+from src.domain.ratios.engine import FinancialRatioCalculator
+from src.infrastructure.ocr.paddle_engine import PaddleOCREngine
+from src.infrastructure.pdf.extractor import PDFExtractor
 
 
 @pytest.fixture
@@ -373,7 +373,7 @@ class TestPDFExtractorThreeRoutes:
     def test_no_production_path_invokes_tesseract(self, native_pdf_path: Path, scanned_pdf_path: Path):
         """Verify Tesseract is completely decoupled and never imported or invoked."""
         import sys
-        import src.ocr.pdf_extractor as pe_mod
+        import src.infrastructure.pdf.extractor as pe_mod
 
         # Verify tesseract is not imported in pdf_extractor module
         assert "TesseractEngine" not in pe_mod.__dict__
